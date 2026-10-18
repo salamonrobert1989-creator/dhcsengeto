@@ -154,7 +154,7 @@ test('elavult élő adatból menetrend nélkül és alvás után nincs késői c
   assert.equal(sleeping.due(now + 36000, now - 1).missed.length, 1);
   assert.equal(sleeping.due(now + 37000, now - 1).ringing.length, 0);
 });
-test('hangengedélyezés előtt esedékes jelzés később sem csenget visszamenőleg', () => {
+test('a hang aktiválása előtt esedékes jelzés később sem csenget visszamenőleg', () => {
   const monitor = new M.Monitor();
   monitor.ingest([item()], now);
   assert.equal(monitor.due(now + 30000).ringing.length, 0);

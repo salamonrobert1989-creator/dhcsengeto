@@ -35,10 +35,6 @@
     .muted { color: #64748b; font-size: 13px; margin: 0; line-height: 1.6; }
     .toolbar { flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
     main { padding: 26px 24px; }
-    .sound-notice { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 18px; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 14px; margin-bottom: 20px; }
-    .sound-notice strong { font-size: 14px; color: #3730a3; }
-    .sound-notice p { font-size: 12px; margin: 5px 0 0; line-height: 1.6; color: #475569; }
-    .sound-notice[hidden] { display: none; }
     .overview { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
     .stat { padding: 16px 18px; background: white; border: 1px solid #e2e8f0; border-radius: 12px; }
     .stat-label { display: block; font-size: 11px; font-weight: 650; color: #64748b; margin-bottom: 8px; text-transform: uppercase; letter-spacing: .06em; }
@@ -69,7 +65,6 @@
     .time { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
     .time-label { font-size: 10px; font-weight: 600; color: #64748b; display: block; margin-bottom: 4px; }
     .countdown { display: block; color: #475569; font-size: 11px; margin-top: 5px; }
-    .alarm-time { font-size: 16px; color: #4338ca; font-weight: 750; font-variant-numeric: tabular-nums; }
     footer { padding: 16px 5px; font-size: 11px; line-height: 1.8; color: #64748b; }
     footer p { margin: 0 0 6px; }
     dialog { width: min(640px, calc(100% - 30px)); border: 1px solid #e2e8f0; border-radius: 16px; padding: 0; color: #0f172a; max-height: 85vh; }
@@ -90,7 +85,6 @@
       .alarm { padding: 16px; }
       header { padding: 18px 16px; }
       main { padding: 18px 12px; }
-      .sound-notice { align-items: flex-start; flex-direction: column; }
       .stat { padding: 12px 10px; }
       .stat-value { font-size: 14px; }
       .stat-label { font-size: 9px; }
@@ -109,7 +103,7 @@
       <div class="alarm-message">
         <svg class="bell" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4M12 2V1"/></svg>
         <div role="status" aria-live="polite">
-          <h2 id="alarm-title">Hangjelzés még nincs engedélyezve</h2>
+          <h2 id="alarm-title">Hangjelzés előkészítése</h2>
           <p id="alarm-subtitle">Szigetszentmiklós → Dunaharaszti külső</p>
         </div>
       </div>
@@ -130,10 +124,6 @@
     </div>
   </header>
   <main class="wrap">
-    <div class="sound-notice" id="sound-notice">
-      <div><strong>Egy kattintás a hangjelzés bekapcsolásához</strong><p>A böngésző csak engedélyezés után játszhat le hangot. A menetrend addig is frissül.</p></div>
-      <button class="primary" id="enable-sound">Hangjelzés engedélyezése</button>
-    </div>
     <section class="overview" aria-label="Áttekintés">
       <div class="stat"><span class="stat-label">Pontos idő</span><span class="stat-value" id="clock">--:--:--</span></div>
       <div class="stat"><span class="stat-label">Következő jelzés</span><span class="stat-value" id="next-alarm">—</span></div>
@@ -290,6 +280,8 @@
       let stopIds = [], inFlight = false, pollTimer = null, tickTimer = null, pollController = null, detailController = null;
       let lastSuccess = 0, nextPoll = 0, hasError = false, requestError = '', verificationErrors = 0;
       let audio = null, armedAt = Infinity, activeAlarm = null, stopped = false, lastSecond = -1, listSignature = '', wakeLock = null;
+      const soundGestureEvents = ['pointerup', 'touchend', 'click', 'keydown'];
+      let waitingForSoundGesture = false, automaticSoundAttempt = false, wakeLockPending = false;
 
       function log(message, type = '') {
         const entry = node('div', `log-entry ${type}`, `${time(Date.now())} · ${message}`);
@@ -410,33 +402,71 @@
         }
       }
       async function acquireWakeLock() {
-        if (!navigator.wakeLock || document.visibilityState !== 'visible' || armedAt === Infinity || wakeLock) return;
-        try { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }, { once: true }); } catch { /* Optional; the notice explains background limitations. */ }
+        if (!navigator.wakeLock || document.visibilityState !== 'visible' || armedAt === Infinity || wakeLock || wakeLockPending || stopped) return;
+        wakeLockPending = true;
+        try {
+          const lock = await navigator.wakeLock.request('screen');
+          if (stopped || armedAt === Infinity || document.visibilityState !== 'visible') { await lock.release(); return; }
+          wakeLock = lock;
+          lock.addEventListener('release', () => { if (wakeLock === lock) wakeLock = null; }, { once: true });
+        } catch { /* Screen wake lock is optional. */ }
+        finally { wakeLockPending = false; }
+      }
+      function stopWaitingForSoundGesture() {
+        if (!waitingForSoundGesture) return;
+        waitingForSoundGesture = false;
+        for (const type of soundGestureEvents) document.removeEventListener(type, activateSoundFromGesture, true);
+      }
+      function activateSoundFromGesture(event) {
+        if (event.isTrusted && !event.repeat) void enableSound();
+      }
+      function updateSoundState(context) {
+        if (stopped || context !== audio) return;
+        if (context.state === 'running') {
+          const becameReady = armedAt === Infinity;
+          if (becameReady) armedAt = Date.now();
+          stopWaitingForSoundGesture();
+          if (!activeAlarm) $('alarm-title').textContent = 'Csengetés készenlétben';
+          if (becameReady) log('Hangjelzés automatikusan aktiválva.', 'success');
+          void acquireWakeLock();
+        } else {
+          armedAt = Infinity;
+          stopAlarm(false);
+          $('alarm-title').textContent = 'A hang az első kattintásra aktiválódik';
+          if (!waitingForSoundGesture) {
+            waitingForSoundGesture = true;
+            for (const type of soundGestureEvents) document.addEventListener(type, activateSoundFromGesture, { capture: true, passive: true });
+          }
+        }
       }
       async function enableSound() {
+        if (stopped) return false;
+        let context = null;
         try {
           if (!audio || audio.state === 'closed') {
             const Audio = window.AudioContext || window.webkitAudioContext;
             if (!Audio) throw new Error('Ez a böngésző nem támogatja a hangjelzést.');
             audio = new Audio();
-            audio.addEventListener('statechange', () => {
-              if (audio.state === 'suspended' || audio.state === 'interrupted') {
-                armedAt = Infinity;
-                stopAlarm(false);
-                $('sound-notice').hidden = false;
-                $('alarm-title').textContent = 'A hangjelzést újra engedélyezni kell';
-              }
-            });
+            const context = audio;
+            context.addEventListener('statechange', () => updateSoundState(context));
           }
-          await audio.resume();
-          if (audio.state !== 'running') throw new Error('A böngésző még nem engedélyezte a hangot.');
-          if (armedAt === Infinity) armedAt = Date.now();
-          $('sound-notice').hidden = true;
-          if (!activeAlarm) $('alarm-title').textContent = 'Csengetés készenlétben';
-          log('Hangjelzés engedélyezve.', 'success');
-          acquireWakeLock();
-          return true;
-        } catch (error) { log(error.message, 'error'); $('alarm-title').textContent = 'A hangjelzés nem indítható'; return false; }
+          context = audio;
+          updateSoundState(context);
+          // Call resume synchronously within a trusted gesture. An earlier
+          // automatic resume may still be pending under browser autoplay rules.
+          if (context.state !== 'running') await context.resume();
+          if (stopped || context !== audio) return false;
+          updateSoundState(context);
+          return context.state === 'running';
+        } catch (error) {
+          if (!stopped && context === audio) { log(error.message, 'error'); $('alarm-title').textContent = 'A hangjelzés nem indítható'; }
+          return false;
+        }
+      }
+      function tryAutomaticSound() {
+        if (automaticSoundAttempt || stopped) return;
+        automaticSoundAttempt = true;
+        void enableSound().finally(() => { automaticSoundAttempt = false; });
       }
       function ring(items, test = false) {
         if (!audio || audio.state !== 'running') return;
@@ -475,7 +505,7 @@
         oscillator.disconnect();
         gain.disconnect();
         $('alarm-banner').classList.remove('ringing');
-        $('alarm-title').textContent = armedAt === Infinity ? 'Hangjelzés még nincs engedélyezve' : 'Csengetés készenlétben';
+        $('alarm-title').textContent = armedAt === Infinity ? 'A hang az első kattintásra aktiválódik' : 'Csengetés készenlétben';
         $('alarm-subtitle').textContent = 'Szigetszentmiklós → Dunaharaszti külső';
         $('stop-alarm').disabled = true;
         log(manual ? 'A csengetést kikapcsoltad. A következő vonat jelzése aktív marad.' : 'A csengetés véget ért.');
@@ -500,10 +530,9 @@
             const info = node('div', '');
             info.append(node('div', 'train-number', item.number || 'Nincs vonatszám'), node('span', 'destination', item.headsign));
             info.append(node('span', 'badge', item.realtime ? `Valós idejű${item.delay > 0 ? ` · +${item.delay} perc` : ''}` : 'Menetrend szerint'));
-            const timing = node('div', 'train-time'), departure = node('div', ''), alarm = node('div', '');
+            const timing = node('div', 'train-time'), departure = node('div', '');
             departure.append(node('span', 'time-label', 'INDULÁS'), node('span', 'time', time(item.time)), node('span', 'countdown'));
-            alarm.append(node('span', 'time-label', 'JELZÉS'), node('span', 'alarm-time', time(item.time + 30000)));
-            timing.append(departure, alarm); row.append(info, timing); fragment.append(row);
+            timing.append(departure); row.append(info, timing); fragment.append(row);
           }
           if (!trains.length) fragment.append(node('div', 'empty', lastSuccess ? 'A következő 30 percben nincs jelzett H6-indulás Dunaharaszti külső felé.' : 'Az indulási lista az adatkapcsolat létrejötte után jelenik meg.'));
           $('trains').replaceChildren(fragment);
@@ -552,6 +581,7 @@
       function start() {
         if (tickTimer) return;
         stopped = false;
+        tryAutomaticSound();
         tickTimer = setInterval(tick, 250);
         paint(Date.now());
         refresh();
@@ -561,13 +591,13 @@
         clearTimeout(pollTimer); clearInterval(tickTimer); tickTimer = null;
         if (pollController) pollController.abort();
         if (detailController) detailController.abort();
+        stopWaitingForSoundGesture();
         stopAlarm(false); remember();
         if (wakeLock) { wakeLock.release(); wakeLock = null; }
         if (audio && audio.state !== 'closed') audio.close();
         armedAt = Infinity;
-        $('sound-notice').hidden = false;
+        automaticSoundAttempt = false;
       }
-      $('enable-sound').addEventListener('click', enableSound);
       $('test-alarm').addEventListener('click', async () => { if (await enableSound()) ring([], true); });
       $('stop-alarm').addEventListener('click', () => stopAlarm(true));
       $('refresh').addEventListener('click', refresh);
@@ -576,7 +606,7 @@
       function clearTrip() { if (detailController) detailController.abort(); $('trip-content').replaceChildren(); }
       for (const button of document.querySelectorAll('[data-close]')) button.addEventListener('click', () => { if (button.dataset.close === 'trip-dialog') clearTrip(); $(button.dataset.close).close(); });
       $('trip-dialog').addEventListener('close', clearTrip);
-      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { tick(); if (!inFlight && Date.now() - lastSuccess >= POLL_MS) refresh(); acquireWakeLock(); } });
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { tryAutomaticSound(); tick(); if (!inFlight && Date.now() - lastSuccess >= POLL_MS) refresh(); acquireWakeLock(); } });
       window.addEventListener('online', refresh);
       window.addEventListener('pagehide', cleanup);
       window.addEventListener('pageshow', event => { if (event.persisted) start(); });
