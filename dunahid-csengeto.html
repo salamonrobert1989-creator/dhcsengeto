@@ -155,7 +155,7 @@
     <div class="dialog-body" id="log-entries"></div>
   </dialog>
   <dialog id="trip-dialog" aria-labelledby="trip-title">
-    <div class="dialog-heading"><h2 id="trip-title">A vonat teljes menetrendje</h2><button data-close="trip-dialog" aria-label="Menetrend bezárása">Bezárás</button></div>
+    <div class="dialog-heading"><h2 id="trip-title">Menetrend</h2><button data-close="trip-dialog" aria-label="Menetrend bezárása">Bezárás</button></div>
     <div class="dialog-body" id="trip-content"></div>
   </dialog>
 
@@ -188,8 +188,19 @@
         }
         return null;
       }
+      function orderedStopTimes(times) {
+        const sequence = item => {
+          const value = item.stopSequence;
+          if (typeof value === 'number' && Number.isFinite(value)) return value;
+          if (typeof value === 'string' && /^\d+$/.test(value.trim())) return Number(value);
+          return null;
+        };
+        const ordered = [...times];
+        if (ordered.every(item => sequence(item) !== null)) ordered.sort((a, b) => sequence(a) - sequence(b));
+        return ordered;
+      }
       function direction(entry, stops) {
-        const times = entry.stopTimes || [];
+        const times = orderedStopTimes(entry.stopTimes || []);
         const origin = times.findIndex(item => isOrigin((stops[item.stopId] || {}).name));
         return origin >= 0 && times.some((item, index) => index > origin && isTarget((stops[item.stopId] || {}).name));
       }
@@ -222,11 +233,10 @@
       }
       function tripSchedule(data, tripId, now) {
         const times = (data.entry || {}).stopTimes;
-        if (!Array.isArray(times) || !times.length) throw new Error('Nem érkezett teljes menetrendi megállólista.');
+        if (!Array.isArray(times) || !times.length) throw new Error('Nem érkezett menetrendi megállólista.');
         const refs = data.references || {}, stops = refs.stops || {};
         const trip = (refs.trips || {})[tripId] || data.entry.trip || {};
-        const ordered = [...times];
-        if (ordered.every(item => Number.isFinite(item.stopSequence))) ordered.sort((a, b) => a.stopSequence - b.stopSequence);
+        const ordered = orderedStopTimes(times);
         const rows = ordered.map(item => ({
           stopId: String(item.stopId || ''), name: String((stops[item.stopId] || {}).name || item.stopId || 'Ismeretlen megálló'),
           scheduledArrival: positiveTime(item.arrivalTime || item.scheduledArrivalTime),
@@ -616,10 +626,10 @@
       }
       function renderTrip(snapshot, useRealtime, status) {
         const fragment = document.createDocumentFragment(), rows = snapshot.rows;
-        fragment.append(node('p', 'trip-summary', `${rows[0].name} → ${rows[rows.length - 1].name} · ${rows.length} megálló`));
+        fragment.append(node('p', 'trip-summary', `${rows[0].name} → ${rows[rows.length - 1].name}`));
         fragment.append(node('p', 'trip-status', status));
         const table = node('table', 'timetable'), head = node('thead'), headings = node('tr'), body = node('tbody');
-        table.setAttribute('aria-label', 'A vonat teljes menetrendje');
+        table.setAttribute('aria-label', 'Vonat menetrendje');
         for (const label of ['Megálló', 'Érkezés', 'Indulás']) { const cell = node('th', '', label); cell.scope = 'col'; headings.append(cell); }
         head.append(headings);
         for (const row of rows) {
@@ -639,7 +649,7 @@
         const scroll = $('trip-content').scrollTop;
         $('trip-content').replaceChildren(fragment);
         $('trip-content').scrollTop = scroll;
-        $('trip-title').textContent = snapshot.number ? `${snapshot.number} · teljes menetrend` : 'A vonat teljes menetrendje';
+        $('trip-title').textContent = snapshot.number || 'Menetrend';
       }
       async function showTrip(tripId, key) {
         if (detailController) detailController.abort();
@@ -648,7 +658,7 @@
         const cached = scheduleCache.get(key, Date.now());
         $('trip-content').textContent = 'Menetrend betöltése…';
         $('trip-content').scrollTop = 0;
-        $('trip-title').textContent = 'A vonat teljes menetrendje';
+        $('trip-title').textContent = 'Menetrend';
         if (!$('trip-dialog').open) $('trip-dialog').showModal();
         if (cached) renderTrip(cached, false, 'Mentett menetrend · friss adatok betöltése…');
         try {
@@ -662,7 +672,7 @@
         } catch (error) {
           if (!signal.aborted) {
             if (cached) renderTrip(cached, false, 'Mentett menetrend · az élő adatok jelenleg nem érhetők el.');
-            else $('trip-content').textContent = `Nem tölthető be a teljes menetrend. ${error instanceof TypeError ? 'Ellenőrizd az adatkapcsolatot.' : error.message}`;
+            else $('trip-content').textContent = `Nem tölthető be a menetrend. ${error instanceof TypeError ? 'Ellenőrizd az adatkapcsolatot.' : error.message}`;
           }
         }
         finally { if (detailController && detailController.signal === signal) detailController = null; }

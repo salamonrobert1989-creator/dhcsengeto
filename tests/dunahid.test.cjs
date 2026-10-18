@@ -209,6 +209,29 @@ test('a teljes menetrend megtartja a Szigetszentmiklós előtti megállókat is'
   assert.equal(snapshot.number, '6123');
 });
 
+test('a menetrend a kiválasztott vonat indulóállomásával kezdődik, Ráckevével vagy Tököllel', () => {
+  for (const originName of ['Ráckeve', 'Tököl']) {
+    const data = fullTrip();
+    data.references.stops.r.name = originName;
+    // Some providers encode stopSequence as strings and return the currently
+    // watched stop first. The service order still determines the true start.
+    for (const stop of data.entry.stopTimes) stop.stopSequence = String(stop.stopSequence);
+    const [first, second, watched, fourth, last] = data.entry.stopTimes;
+    data.entry.stopTimes = [watched, fourth, last, first, second];
+    const snapshot = M.tripSchedule(data, trip.id, now);
+    assert.equal(snapshot.rows[0].name, originName);
+    assert.equal(snapshot.rows[1].name, 'Szigetszentmiklós-Gyártelep');
+    assert.equal(snapshot.rows[2].name, 'Szigetszentmiklós');
+    assert.equal(snapshot.rows[4].name, 'Közvágóhíd');
+    assert.equal(M.direction(data.entry, data.references.stops), true);
+  }
+});
+
+test('szöveges megállósorszámok mellett a fordított irány továbbra sem csengethet', () => {
+  const data = { stopTimes: [{ stopId: 'a', stopSequence: '2' }, { stopId: 'c', stopSequence: '0' }, { stopId: 'b', stopSequence: '1' }] };
+  assert.equal(M.direction(data, stops), false);
+});
+
 test('a teljes menetrend a megállósorrendet követi, és nincs 100 megállós levágás', () => {
   const data = fullTrip();
   data.entry.stopTimes.reverse();
