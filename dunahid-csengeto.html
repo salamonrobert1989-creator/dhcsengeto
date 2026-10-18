@@ -71,7 +71,6 @@
     .train-time { text-align: right; gap: 24px; flex-shrink: 0; }
     .time { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
     .time-label { font-size: 10px; font-weight: 600; color: #64748b; display: block; margin-bottom: 4px; }
-    .countdown { display: block; color: #475569; font-size: 11px; margin-top: 5px; }
     footer { padding: 16px 5px; font-size: 11px; line-height: 1.8; color: #64748b; }
     footer p { margin: 0 0 6px; }
     dialog { width: min(640px, calc(100% - 30px)); border: 1px solid #e2e8f0; border-radius: 16px; padding: 0; color: #0f172a; max-height: 85vh; }
@@ -694,7 +693,7 @@
           for (const item of trains) {
             const appearance = TrainModel.departureAppearance(item);
             const row = node('button', `train ${appearance.className}`);
-            row.type = 'button'; row.dataset.trip = item.tripId; row.dataset.key = item.key; row.dataset.departure = item.time; row.dataset.station = item.stationName || 'Szigetszentmiklós';
+            row.type = 'button'; row.dataset.trip = item.tripId; row.dataset.key = item.key; row.dataset.station = item.stationName || 'Szigetszentmiklós';
             const info = node('div', '');
             info.append(node('div', 'train-number', item.number || 'Nincs vonatszám'), node('span', 'destination', item.headsign));
             info.append(node('span', 'departure-station', `Indulás: ${row.dataset.station}`));
@@ -703,16 +702,12 @@
             if (appearance.delayLabel) status.append(node('span', `delay-badge ${appearance.delayClass}`, appearance.delayLabel));
             info.append(status);
             const timing = node('div', 'train-time'), departure = node('div', '');
-            departure.append(node('span', 'time-label', 'INDULÁS'), node('span', 'time', time(item.time)), node('span', 'countdown'));
+            departure.append(node('span', 'time-label', 'INDULÁS'), node('span', 'time', time(item.time)));
             timing.append(departure); row.append(info, timing); fragment.append(row);
           }
           if (!trains.length) fragment.append(node('div', 'empty', lastSuccess || southLastSuccess ? 'A következő 30 percben nincs indulás a figyelt irányokban.' : 'Az indulási lista az adatkapcsolat létrejötte után jelenik meg.'));
           $('trains').replaceChildren(fragment);
           $('train-count').textContent = `${trains.length} vonat`;
-        }
-        for (const row of $('trains').querySelectorAll('[data-departure]')) {
-          const seconds = Math.max(0, Math.ceil((Number(row.dataset.departure) - now) / 1000));
-          row.querySelector('.countdown').textContent = seconds >= 60 ? `${Math.floor(seconds / 60)} perc ${seconds % 60} mp múlva` : `${seconds} mp múlva`;
         }
       }
       function tick() {

@@ -6,7 +6,7 @@
 
 1. Nyisd meg a `dunahid-csengeto.html` fájlt naprakész Chrome, Edge, Firefox vagy Safari böngészőben, internetkapcsolattal.
 2. A hang automatikusan aktiválódik, külön hangengedélyező gomb nincs. Ha a böngésző első felhasználói műveletet követel, az oldalon bárhová kattintás, érintés vagy billentyűleütés bekapcsolja a hangot. A felső sáv mutatja, amikor a csengetés készen áll. A **Próbacsengés** a hangot és a leállítást is kipróbálja.
-3. Tartsd nyitva és lehetőleg előtérben a lapot. A jelzés az élő adat szerinti, ennek hiányában a menetrendi indulás után 30 másodperccel indul, 20 másodperc után automatikusan véget ér. A felső **Csengetés kikapcsolása** gomb az aktuális jelzést azonnal leállítja; a következő vonatok jelzése aktív marad. A vonatsorok az indulási időt és a hátralévő időt mutatják. Az indulás melletti jelzési időpont, az időzítési feliratok és az utolsó frissítés mezője nem jelennek meg a felületen.
+3. Tartsd nyitva és lehetőleg előtérben a lapot. A jelzés az élő adat szerinti, ennek hiányában a menetrendi indulás után 30 másodperccel indul, 20 másodperc után automatikusan véget ér. A felső **Csengetés kikapcsolása** gomb az aktuális jelzést azonnal leállítja; a következő vonatok jelzése aktív marad. A vonatsorok az indulási időt mutatják, élő adatoknál a menetrendtől való eltérés jelvényével. Az indulásig hátralévő idő, az indulás melletti jelzési időpont, az időzítési feliratok és az utolsó frissítés mezője nem jelennek meg a felületen.
 
 Telepítés, fordítás, külső CSS vagy JavaScript-könyvtár nem szükséges. Statikus tárhelyről is használható. Helyi kiszolgáláshoz a tároló gyökerében: `python3 -m http.server 8080`.
 
