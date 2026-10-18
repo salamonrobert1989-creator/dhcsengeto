@@ -21,6 +21,18 @@ test('az irányt a megállók sorrendje dönti el, nem a közös útvonalnév', 
   assert.equal(M.direction({ stopTimes: [{ stopId: 'c' }, { stopId: 'b' }, { stopId: 'a' }] }, stops), false);
   assert.equal(M.direction({ stopTimes: [{ stopId: 'a' }, { stopId: 'c' }] }, stops), false);
 });
+test('Dunaharaszti külsőről csak a Tököl és Ráckeve felé vezető irány kerül az új listába', () => {
+  const allStops = { ...stops, t: { name: 'Tököl' }, r: { name: 'Ráckeve' } };
+  const entry = ids => ({ stopTimes: ids.map((stopId, index) => ({ stopId, stopSequence: String(index) })) });
+  assert.equal(M.southboundDirection(entry(['c', 'b', 'a', 't', 'r']), allStops), true);
+  assert.equal(M.southboundDirection(entry(['c', 'b', 'a', 't']), allStops), true);
+  assert.equal(M.southboundDirection(entry(['r', 't', 'a', 'b', 'c']), allStops), false);
+  assert.equal(M.southboundDirection(entry(['c', 'b']), allStops), false);
+});
+test('a déli irány rövidített, Szigetszentmiklósig közlekedő járata is megjelenhet', () => {
+  assert.equal(M.southboundDirection({ stopTimes: [{ stopId: 'b' }, { stopId: 'a' }] }, stops), true);
+  assert.equal(M.direction({ stopTimes: [{ stopId: 'b' }, { stopId: 'a' }] }, stops), false);
+});
 test('csak a pontos Szigetszentmiklós megálló és H6 járat fogadható el', () => {
   assert.equal(M.isOrigin('Szigetszentmiklós H'), true);
   assert.equal(M.isOrigin('Szigetszentmiklós, József Attila-telep'), false);
@@ -112,6 +124,60 @@ test('a 30 perces kijelzés pontos határt használ, minden vonatot mutat', () =
   monitor.ingest([{ ...item({ predictedDepartureTime: seconds(now + 1800000) }), key: 'boundary' }, { ...item({ predictedDepartureTime: seconds(now + 1800001) }), key: 'outside' }], now);
   assert.equal(monitor.upcoming(now).length, 13);
   assert.equal(monitor.upcoming(now).at(-1).key, 'boundary');
+});
+test('a két megálló indulásai időrendben, darabszámlevágás nélkül jelennek meg', () => {
+  const alarm = new M.Monitor(), displayOnly = new M.Monitor();
+  for (let i = 0; i < 12; i++) {
+    const record = { ...item({ predictedDepartureTime: seconds(now + i * 60000) }), key: `trip-${i}`, stationName: i % 2 ? 'Dunaharaszti külső' : 'Szigetszentmiklós' };
+    (i % 2 ? displayOnly : alarm).ingest([record], now);
+  }
+  displayOnly.ingest([{ ...item({ predictedDepartureTime: seconds(now + 30 * 60000) }), key: 'boundary' }, { ...item({ predictedDepartureTime: seconds(now + 30 * 60000 + 1) }), key: 'outside' }], now);
+  const board = M.combinedDepartures(alarm.upcoming(now), displayOnly.upcoming(now));
+  assert.equal(board.length, 13);
+  assert.equal(board[0].key, 'trip-0');
+  assert.equal(board[1].key, 'trip-1');
+  assert.equal(board.at(-1).key, 'boundary');
+  assert.equal(alarm.pending(now).length, 6);
+});
+test('az új, csak kijelzett indulások nem kerülnek a csengetést vezérlő rekordok közé', () => {
+  const alarm = new M.Monitor(), displayOnly = new M.Monitor();
+  alarm.ingest([{ ...item({ predictedDepartureTime: seconds(now + 60000) }), key: 'north' }], now);
+  displayOnly.ingest([{ ...item(), key: 'south' }], now);
+  assert.equal(M.combinedDepartures(alarm.upcoming(now), displayOnly.upcoming(now)).length, 2);
+  assert.equal(alarm.due(now + 30000, now - 1).ringing.length, 0);
+  assert.equal(alarm.handled.has('south'), false);
+  assert.equal(alarm.pending(now)[0].key, 'north');
+});
+
+test('az élő sor színe a pontos késési időhatárokat követi', () => {
+  for (const [delayMs, expected] of [[-1, 'delay-early'], [0, 'delay-green'], [59999, 'delay-green'], [60000, 'delay-green'], [179999, 'delay-green'], [180000, 'delay-red'], [3600000, 'delay-red']]) {
+    const record = item({ predictedDepartureTime: seconds(now + delayMs) });
+    assert.equal(M.departureAppearance(record).className, expected, `delay ${delayMs}`);
+  }
+});
+test('élő adatoknál a késés kiírható, menetrendi adatoknál nincs kitalált késés', () => {
+  const delayed = M.departureAppearance(item({ predictedDepartureTime: seconds(now + 390000) }));
+  assert.equal(delayed.delayLabel, '+6 perc');
+  assert.equal(delayed.delayClass, 'late');
+  assert.equal(M.departureAppearance(item()).delayLabel, '');
+  assert.equal(M.departureAppearance(item({ predictedDepartureTime: seconds(now - 30000) })).delayLabel, '-1 perc');
+  const minor = M.departureAppearance(item({ predictedDepartureTime: seconds(now + 179999) }));
+  assert.equal(minor.delayLabel, '+2 perc');
+  assert.equal(minor.delayClass, 'minor');
+  assert.equal(M.departureAppearance(item({ predictedDepartureTime: seconds(now + 59999) })).delayLabel, '');
+  const scheduled = M.departureAppearance(item({ predictedDepartureTime: undefined }));
+  assert.equal(scheduled.className, 'scheduled');
+  assert.equal(scheduled.label, 'Menetrend szerint');
+  const unknown = M.departureAppearance(item({ departureTime: undefined }));
+  assert.equal(unknown.className, 'delay-green');
+  assert.equal(unknown.label, 'Valós idejű · késés nem ismert');
+});
+test('élő adat elvesztésekor a szín és a késésfelirat is menetrendire vált', () => {
+  const record = item({ departureTime: seconds(now + 90000), predictedDepartureTime: seconds(now + 990000) });
+  assert.equal(M.departureAppearance(M.effectiveDeparture(record, now)).className, 'delay-red');
+  const fallback = M.departureAppearance(M.effectiveDeparture(record, now + 46000));
+  assert.equal(fallback.className, 'scheduled');
+  assert.equal(fallback.label, 'Menetrend szerint');
 });
 test('nem gyárt vonatszámot egy dátumból vagy egy jármű azonosítójából', () => {
   assert.equal(M.trainNumber(trip), '6123');

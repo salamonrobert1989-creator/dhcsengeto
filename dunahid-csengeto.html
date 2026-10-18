@@ -49,18 +49,25 @@
     .connection[data-state="ok"] .dot { background: #059669; }
     .connection[data-state="error"] .dot { background: #e11d48; }
     .connection[data-state="error"] { background: #fff1f2; color: #9f1239; }
+    .source-warning { margin: 0; padding: 10px 20px; background: #fffbeb; color: #92400e; font-size: 12px; line-height: 1.6; }
+    .source-warning[hidden] { display: none; }
     #trains { padding: 16px; max-height: 570px; overflow-y: auto; }
     .empty { padding: 48px 12px; text-align: center; color: #64748b; font-size: 14px; line-height: 1.8; }
-    .train { padding: 16px; border: 1px solid #a7f3d0; background: #f0fdf4; border-radius: 12px; margin-bottom: 10px; width: 100%; text-align: left; }
+    .train { --row-bg: rgba(167, 243, 208, .8); --row-hover: rgba(110, 231, 183, .8); --row-border: #047857; --row-ink: #14532d; --badge-bg: rgba(255, 255, 255, .7); --badge-ink: #166534; padding: 16px; border: 1px solid #cbd5e1; border-left: 4px solid var(--row-border); background: var(--row-bg); border-radius: 12px; margin-bottom: 10px; width: 100%; text-align: left; }
     .train:last-child { margin-bottom: 0; }
-    .train:hover { background: #dcfce7; }
-    .train.scheduled { background: #f8fafc; border-color: #e2e8f0; }
-    .train.delayed { background: #fff1f2; border-color: #fecdd3; }
-    .train-number { font-size: 22px; font-weight: 800; color: #14532d; letter-spacing: -.02em; }
+    .train:hover { background: var(--row-hover); }
+    .train.scheduled { --badge-bg: #e2e8f0; --badge-ink: #475569; }
+    .train.delay-red { --row-bg: rgba(254, 205, 211, .9); --row-hover: rgba(253, 164, 175, .9); --row-border: #be123c; --row-ink: #9f1239; --badge-ink: #9f1239; }
+    .train.delay-early { --row-bg: rgba(186, 230, 253, .9); --row-hover: rgba(125, 211, 252, .9); --row-border: #0369a1; --row-ink: #075985; --badge-ink: #075985; }
+    .train-number { font-size: 22px; font-weight: 800; color: var(--row-ink); letter-spacing: -.02em; }
     .train .destination { display: block; font-size: 12px; color: #475569; margin: 4px 0 8px; }
-    .badge { display: inline-block; font-size: 10px; font-weight: 650; border-radius: 20px; padding: 4px 8px; background: #dcfce7; color: #166534; }
-    .scheduled .badge { background: #e2e8f0; color: #475569; }
-    .delayed .badge { background: #ffe4e6; color: #9f1239; }
+    .departure-station { display: block; font-size: 11px; color: #475569; margin-bottom: 5px; }
+    .badge { display: inline-block; font-size: 10px; font-weight: 650; border-radius: 20px; padding: 4px 8px; background: var(--badge-bg, #dcfce7); color: var(--badge-ink, #166534); }
+    .train-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    .delay-badge { display: inline-block; padding: 4px 8px; font-size: 12px; font-weight: 750; border-radius: 6px; border: 1px solid transparent; color: white; }
+    .delay-badge.late { background: #be123c; border-color: #9f1239; }
+    .delay-badge.minor { background: #d97706; border-color: #b45309; }
+    .delay-badge.early { background: #0369a1; border-color: #075985; }
     .train-time { text-align: right; gap: 24px; flex-shrink: 0; }
     .time { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
     .time-label { font-size: 10px; font-weight: 600; color: #64748b; display: block; margin-bottom: 4px; }
@@ -122,7 +129,7 @@
     <div class="wrap header-inner">
       <div class="brand">
         <span class="line-badge">H6</span>
-        <div><h1>Dunahíd csengető</h1><p class="muted">Szigetszentmiklós → Dunaharaszti külső</p></div>
+        <div><h1>Dunahíd csengető</h1><p class="muted">Szigetszentmiklós · Dunaharaszti külső</p></div>
       </div>
       <div class="toolbar">
         <button id="open-log">Eseménynapló</button>
@@ -138,14 +145,15 @@
     </section>
     <section class="panel" aria-labelledby="list-title">
       <div class="panel-heading">
-        <div><h2 id="list-title">A következő 30 perc vonatai</h2><p class="muted">Indulás Szigetszentmiklósról, Dunaharaszti külső felé</p></div>
+        <div><h2 id="list-title">A következő 30 perc vonatai</h2><p class="muted">Szigetszentmiklós → Dunaharaszti külső<br>Dunaharaszti külső → Tököl / Ráckeve</p></div>
         <span class="count" id="train-count">0 vonat</span>
       </div>
       <div class="connection" id="connection" data-state="loading" role="status"><span class="dot"></span><span id="connection-text">Kapcsolódás a BKK FUTÁR adatforráshoz…</span></div>
+      <p id="south-status" class="source-warning" role="status" hidden></p>
       <div id="trains"><div class="empty">Indulások betöltése…</div></div>
     </section>
     <footer>
-      <p>A csengetés a felső gombbal bármikor leállítható.</p>
+      <p>Csengetés csak a Szigetszentmiklós → Dunaharaszti külső irányhoz tartozik. A felső gombbal bármikor leállítható.</p>
       <p>Adatforrás: BKK FUTÁR · Frissítés 10 másodpercenként · Időzóna: Budapest. Elsődlegesen élő adatok, ezek hiányában menetrend szerinti jelzés.</p>
       <p>Tartsd nyitva és lehetőleg előtérben az oldalt; alvó eszközön vagy felfüggesztett böngészőlapon a pontos jelzés nem garantálható.</p>
     </footer>
@@ -203,6 +211,27 @@
         const times = orderedStopTimes(entry.stopTimes || []);
         const origin = times.findIndex(item => isOrigin((stops[item.stopId] || {}).name));
         return origin >= 0 && times.some((item, index) => index > origin && isTarget((stops[item.stopId] || {}).name));
+      }
+      function southboundDirection(entry, stops) {
+        const times = orderedStopTimes(entry.stopTimes || []);
+        const origin = times.findIndex(item => isTarget((stops[item.stopId] || {}).name));
+        return origin >= 0 && times.some((item, index) => {
+          const name = (stops[item.stopId] || {}).name;
+          return index > origin && (isOrigin(name) || station(name) === 'tokol' || station(name) === 'rackeve');
+        });
+      }
+      function departureAppearance(item) {
+        if (!item.realtime) return { className: 'scheduled', label: 'Menetrend szerint' };
+        if (!item.scheduled) return { className: 'delay-green', label: 'Valós idejű · késés nem ismert' };
+        const seconds = (item.predicted - item.scheduled) / 1000;
+        const className = seconds >= 180 ? 'delay-red' : seconds < 0 ? 'delay-early' : 'delay-green';
+        const delayClass = seconds >= 180 ? 'late' : seconds >= 60 ? 'minor' : seconds < 0 ? 'early' : '';
+        const minutes = seconds < 0 ? Math.max(1, Math.ceil(Math.abs(seconds) / 60)) : Math.floor(seconds / 60);
+        const delayLabel = seconds < 0 ? `-${minutes} perc` : minutes >= 1 ? `+${minutes} perc` : '';
+        return { className, label: 'Valós idejű', delayClass, delayLabel };
+      }
+      function combinedDepartures(first, second) {
+        return [...first, ...second].sort((a, b) => a.time - b.time);
       }
       function departure(item, trip, meta, now) {
         const predicted = positiveTime(item.predictedDepartureTime);
@@ -318,7 +347,7 @@
           return { ringing, missed };
         }
       }
-      return Object.freeze({ MINUTE, FRESH_MS, normal, isOrigin, isTarget, isH6, trainNumber, direction, departure, effectiveDeparture, tripSchedule, timetableTime, ScheduleCache, cancelled, Monitor });
+      return Object.freeze({ MINUTE, FRESH_MS, normal, isOrigin, isTarget, isH6, trainNumber, direction, southboundDirection, departureAppearance, combinedDepartures, departure, effectiveDeparture, tripSchedule, timetableTime, ScheduleCache, cancelled, Monitor });
     })();
   </script>
   <script>
@@ -335,9 +364,12 @@
       let saved = [];
       try { saved = JSON.parse(sessionStorage.getItem('dunahid-handled-v1') || '[]'); } catch { /* Storage is optional, including in file:// mode. */ }
       const monitor = new TrainModel.Monitor(Array.isArray(saved) ? saved : []);
+      // This monitor is display-only. Only the original monitor drives alarms.
+      const southMonitor = new TrainModel.Monitor();
       const tripCache = new Map();
       const scheduleCache = new TrainModel.ScheduleCache();
       let stopIds = [], inFlight = false, pollTimer = null, tickTimer = null, pollController = null, detailController = null;
+      let southStopIds = [], southInFlight = false, southPollTimer = null, southController = null, southLastSuccess = 0, southError = '';
       let lastSuccess = 0, nextPoll = 0, hasError = false, requestError = '', verificationErrors = 0;
       let audio = null, armedAt = Infinity, activeAlarm = null, stopped = false, lastSecond = -1, listSignature = '', wakeLock = null;
       const soundGestureEvents = ['pointerup', 'touchend', 'click', 'keydown'];
@@ -361,10 +393,10 @@
         if ((body.code !== undefined && body.code !== 200) || (body.status !== undefined && body.status !== 'OK') || !body.data) throw new Error('Az adatforrás nem adott érvényes menetrendi választ.');
         return body.data;
       }
-      async function discoverStops(signal) {
-        const data = await api('search', { query: 'Szigetszentmiklós' }, signal);
+      async function discoverStationStops(name, matchesName, signal) {
+        const data = await api('search', { query: name }, signal);
         const refs = (data.references || {}).stops || {};
-        const matches = Object.entries(refs).filter(([, stop]) => TrainModel.isOrigin(stop.name));
+        const matches = Object.entries(refs).filter(([, stop]) => matchesName(stop.name));
         const ids = new Set();
         // Prefer platforms to their parent station to avoid duplicate requests.
         for (const [id, stop] of matches) {
@@ -373,10 +405,13 @@
           else ids.add(stop.id || id);
         }
         for (const [, stop] of matches) if (stop.parentStationId || stop.parentStation) ids.delete(stop.parentStationId || stop.parentStation);
-        if (!ids.size) throw new Error('A Szigetszentmiklós megállót nem sikerült azonosítani az adatforrásban.');
+        if (!ids.size) throw new Error(`A(z) ${name} megállót nem sikerült azonosítani az adatforrásban.`);
         if (ids.size > 8) throw new Error('Az adatforrás túl sok azonos nevű megállót adott; azonosítás szükséges.');
-        stopIds = [...ids];
-        log(`Megálló azonosítva: Szigetszentmiklós (${stopIds.length} megállóhely).`);
+        log(`Megálló azonosítva: ${name} (${ids.size} megállóhely).`);
+        return [...ids];
+      }
+      async function discoverStops(signal) {
+        stopIds = await discoverStationStops('Szigetszentmiklós', TrainModel.isOrigin, signal);
       }
       function fullTrip(tripId, signal) {
         // Explicitly request every stop, including those before the watched
@@ -391,8 +426,8 @@
         const refs = data.references || {};
         if (data.entry.stopTimes.some(item => !((refs.stops || {})[item.stopId] || {}).name)) throw new Error('Hiányos megállósorrend.');
         const trip = (refs.trips || {})[tripId] || data.entry.trip || {};
-        const meta = { allowed: TrainModel.direction(data.entry, refs.stops || {}), number: TrainModel.trainNumber(trip), headsign: trip.tripHeadsign || '', expiry: Date.now() + CACHE_MS };
-        if (meta.allowed) scheduleCache.put(key, TrainModel.tripSchedule(data, tripId, Date.now()), Date.now());
+        const meta = { allowed: TrainModel.direction(data.entry, refs.stops || {}), southbound: TrainModel.southboundDirection(data.entry, refs.stops || {}), number: TrainModel.trainNumber(trip), headsign: trip.tripHeadsign || '', expiry: Date.now() + CACHE_MS };
+        if (meta.allowed || meta.southbound) scheduleCache.put(key, TrainModel.tripSchedule(data, tripId, Date.now()), Date.now());
         tripCache.delete(key);
         tripCache.set(key, meta);
         while (tripCache.size > 64) tripCache.delete(tripCache.keys().next().value);
@@ -466,6 +501,72 @@
             paint(Date.now());
           }
         }
+      }
+      async function refreshSouth() {
+        if (southInFlight || stopped) return;
+        clearTimeout(southPollTimer);
+        southInFlight = true;
+        southController = new AbortController();
+        const signal = southController.signal;
+        try {
+          if (!southStopIds.length) southStopIds = await discoverStationStops('Dunaharaszti külső', TrainModel.isTarget, signal);
+          const candidates = new Map();
+          for (const stopId of southStopIds) {
+            const data = await api('arrivals-and-departures-for-stop', { stopId, minutesBefore: 2, minutesAfter: 30, minutes: 30, includeReferences: true }, signal);
+            if (!data.entry || !Array.isArray(data.entry.stopTimes)) throw new Error('Hiányzik az indulási lista az adatforrás válaszából.');
+            const refs = data.references || {}, trips = refs.trips || {}, routes = refs.routes || {};
+            const actualStop = (refs.stops || {})[data.entry.stopId || stopId];
+            if (actualStop && !TrainModel.isTarget(actualStop.name)) throw new Error('Az adatforrás másik megálló adatait küldte.');
+            for (const item of data.entry.stopTimes) {
+              const trip = trips[item.tripId];
+              if (TrainModel.cancelled(item) || (trip && TrainModel.cancelled(trip))) {
+                southMonitor.cancel(item.tripId, item.serviceDate);
+                continue;
+              }
+              if (!trip || !TrainModel.isH6(trip, routes)) continue;
+              const observedAt = Date.now(), value = TrainModel.departure(item, trip, {}, observedAt);
+              if (value && value.time >= observedAt - 120000 && value.time <= observedAt + 30 * 60000) candidates.set(value.key, { item, trip, observedAt });
+            }
+          }
+          if (candidates.size > 64) throw new Error('Az adatforrás szokatlanul sok indulást adott.');
+          let unverified = 0;
+          const items = [];
+          for (const [key, { item, trip, observedAt }] of candidates) {
+            try {
+              const meta = await tripMeta(item.tripId, key, signal);
+              if (meta.southbound) {
+                const value = TrainModel.departure(item, trip, meta, observedAt);
+                value.stationName = 'Dunaharaszti külső';
+                value.headsign = trip.tripHeadsign || meta.headsign || 'Tököl / Ráckeve felé';
+                items.push(value);
+              }
+            } catch (error) {
+              if (signal.aborted) throw error;
+              unverified++;
+            }
+          }
+          southMonitor.ingest(items, Date.now());
+          southLastSuccess = Date.now();
+          southError = unverified ? `${unverified} Dunaharaszti külsőről induló vonat iránya nem ellenőrizhető.` : '';
+        } catch (error) {
+          if (stopped) return;
+          const message = 'Dunaharaszti külső indulásai most nem frissíthetők. A letöltött adatok megmaradnak; a lekérést újrapróbáljuk.';
+          if (southError !== message) log(message, 'error');
+          southError = message;
+        } finally {
+          southInFlight = false;
+          southController = null;
+          if (!stopped) {
+            $('south-status').textContent = southError;
+            $('south-status').hidden = !southError;
+            southPollTimer = setTimeout(refreshSouth, POLL_MS);
+            paint(Date.now());
+          }
+        }
+      }
+      function refreshAll() {
+        void refresh();
+        void refreshSouth();
       }
       async function acquireWakeLock() {
         if (!navigator.wakeLock || document.visibilityState !== 'visible' || armedAt === Infinity || wakeLock || wakeLockPending || stopped) return;
@@ -585,22 +686,27 @@
           $('connection').dataset.state = hasError || stale || verificationErrors ? 'error' : lastSuccess ? 'ok' : 'loading';
           $('connection-text').textContent = hasError ? `${requestError}${lastSuccess ? ' A letöltött menetrend alapján tovább figyelünk.' : ''} Újrapróbálás: ${Math.max(0, Math.ceil((nextPoll - now) / 1000))} mp.` : stale ? 'Nincs friss adatkapcsolat · figyelés a letöltött menetrend alapján.' : verificationErrors ? `${verificationErrors} vonat iránya nem ellenőrizhető; ezek nem csengetnek.` : `Kapcsolat rendben · frissítés ${Math.max(0, Math.ceil((nextPoll - now) / 1000))} mp múlva`;
         }
-        const trains = monitor.upcoming(now);
-        const signature = JSON.stringify(trains.map(item => [item.key, item.time, item.number, item.realtime, item.delay]));
+        const trains = TrainModel.combinedDepartures(monitor.upcoming(now), southMonitor.upcoming(now));
+        const signature = JSON.stringify(trains.map(item => [item.key, item.time, item.number, item.realtime, item.scheduled, item.predicted, item.stationName]));
         if (signature !== listSignature) {
           listSignature = signature;
           const fragment = document.createDocumentFragment();
           for (const item of trains) {
-            const row = node('button', `train${!item.realtime ? ' scheduled' : item.delay > 2 ? ' delayed' : ''}`);
-            row.type = 'button'; row.dataset.trip = item.tripId; row.dataset.key = item.key; row.dataset.departure = item.time;
+            const appearance = TrainModel.departureAppearance(item);
+            const row = node('button', `train ${appearance.className}`);
+            row.type = 'button'; row.dataset.trip = item.tripId; row.dataset.key = item.key; row.dataset.departure = item.time; row.dataset.station = item.stationName || 'Szigetszentmiklós';
             const info = node('div', '');
             info.append(node('div', 'train-number', item.number || 'Nincs vonatszám'), node('span', 'destination', item.headsign));
-            info.append(node('span', 'badge', item.realtime ? `Valós idejű${item.delay > 0 ? ` · +${item.delay} perc` : ''}` : 'Menetrend szerint'));
+            info.append(node('span', 'departure-station', `Indulás: ${row.dataset.station}`));
+            const status = node('div', 'train-status');
+            status.append(node('span', 'badge', appearance.label));
+            if (appearance.delayLabel) status.append(node('span', `delay-badge ${appearance.delayClass}`, appearance.delayLabel));
+            info.append(status);
             const timing = node('div', 'train-time'), departure = node('div', '');
             departure.append(node('span', 'time-label', 'INDULÁS'), node('span', 'time', time(item.time)), node('span', 'countdown'));
             timing.append(departure); row.append(info, timing); fragment.append(row);
           }
-          if (!trains.length) fragment.append(node('div', 'empty', lastSuccess ? 'A következő 30 percben nincs jelzett H6-indulás Dunaharaszti külső felé.' : 'Az indulási lista az adatkapcsolat létrejötte után jelenik meg.'));
+          if (!trains.length) fragment.append(node('div', 'empty', lastSuccess || southLastSuccess ? 'A következő 30 percben nincs indulás a figyelt irányokban.' : 'Az indulási lista az adatkapcsolat létrejötte után jelenik meg.'));
           $('trains').replaceChildren(fragment);
           $('train-count').textContent = `${trains.length} vonat`;
         }
@@ -621,6 +727,7 @@
           lastSecond = second;
           for (const [id, meta] of tripCache) if (meta.expiry <= now) tripCache.delete(id);
           scheduleCache.prune(now);
+          southMonitor.prune(now);
           paint(now);
         }
       }
@@ -683,12 +790,14 @@
         tryAutomaticSound();
         tickTimer = setInterval(tick, 250);
         paint(Date.now());
-        refresh();
+        refreshAll();
       }
       function cleanup() {
         stopped = true;
         clearTimeout(pollTimer); clearInterval(tickTimer); tickTimer = null;
+        clearTimeout(southPollTimer);
         if (pollController) pollController.abort();
+        if (southController) southController.abort();
         if (detailController) detailController.abort();
         stopWaitingForSoundGesture();
         stopAlarm(false); remember();
@@ -699,14 +808,14 @@
       }
       $('test-alarm').addEventListener('click', async () => { if (await enableSound()) ring([], true); });
       $('stop-alarm').addEventListener('click', () => stopAlarm(true));
-      $('refresh').addEventListener('click', refresh);
+      $('refresh').addEventListener('click', refreshAll);
       $('open-log').addEventListener('click', () => $('log-dialog').showModal());
       $('trains').addEventListener('click', event => { const row = event.target.closest('[data-trip]'); if (row) showTrip(row.dataset.trip, row.dataset.key); });
       function clearTrip() { if (detailController) detailController.abort(); $('trip-content').replaceChildren(); }
       for (const button of document.querySelectorAll('[data-close]')) button.addEventListener('click', () => { if (button.dataset.close === 'trip-dialog') clearTrip(); $(button.dataset.close).close(); });
       $('trip-dialog').addEventListener('close', clearTrip);
-      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { tryAutomaticSound(); tick(); if (!inFlight && Date.now() - lastSuccess >= POLL_MS) refresh(); acquireWakeLock(); } });
-      window.addEventListener('online', refresh);
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { tryAutomaticSound(); tick(); if (!inFlight && Date.now() - lastSuccess >= POLL_MS) refresh(); if (!southInFlight && Date.now() - southLastSuccess >= POLL_MS) refreshSouth(); acquireWakeLock(); } });
+      window.addEventListener('online', refreshAll);
       window.addEventListener('pagehide', cleanup);
       window.addEventListener('pageshow', event => { if (event.persisted) start(); });
       log('Dunahíd csengető elindult. Élő adat hiányában a menetrend szerint csenget.');

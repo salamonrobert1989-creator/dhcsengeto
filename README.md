@@ -1,6 +1,6 @@
 # Dunahíd csengető
 
-Önálló, magyar nyelvű HTML-program a H6-os HÉV Szigetszentmiklósról Dunaharaszti külső felé induló vonataihoz.
+Önálló, magyar nyelvű HTML-program a H6-os HÉV indulásainak követésére Szigetszentmiklósnál és Dunaharaszti külsőnél. A csengetés továbbra is csak a Szigetszentmiklósról Dunaharaszti külső felé induló vonatokhoz tartozik.
 
 ## Használat
 
@@ -15,7 +15,10 @@ A teljesen kattintás nélküli hanglejátszás a böngésző adott webhelyre é
 ## Adatok és jelzés
 
 - A csatolt mintában használt BKK FUTÁR-végpontot és böngészős API-kulcsot használja; az API elérhetősége, kulcsának érvényessége és a böngészőből engedélyezett hozzáférés szükséges. Felhőkörnyezetben a `futar.bkk.hu` tartománynak engedélyezettnek kell lennie.
-- A megállókat futáskor név alapján keresi meg, és csak a H6-os járatokat dolgozza fel. A Dunaharaszti külső felé vezető irányt a vonat megállósorrendje igazolja: Szigetszentmiklósnak Dunaharaszti külső előtt kell szerepelnie. A két irány közös útvonalneve nem irányszűrő.
+- A két megállót futáskor név alapján keresi meg, és csak a H6-os járatokat dolgozza fel. A Dunaharaszti külső felé vezető irányt a vonat megállósorrendje igazolja: Szigetszentmiklósnak Dunaharaszti külső előtt kell szerepelnie. A két irány közös útvonalneve nem irányszűrő.
+- A listában megjelennek a Dunaharaszti külsőről Tököl és Ráckeve felé induló járatok is, a déli irányban Szigetszentmiklósig rövidített járatokkal együtt. A megállósorrendben Dunaharaszti külsőt Szigetszentmiklósnak, Tökölnek vagy Ráckevének kell követnie. Ezek a vonatok csak a kijelzésben szerepelnek. A következő jelzés és a csengetés változatlanul kizárólag az eredeti megálló és irány vonataihoz tartozik.
+- A két megálló következő 30 perces indulásai közös időrendben látszanak. Minden sornál szerepel, melyik megállóból indul a vonat. A két adatlekérés egymástól függetlenül frissül, így Dunaharaszti külső lekérésének késése vagy hibája nem állítja meg az eredeti figyelést.
+- Élő adatok esetén a késést is kiírja a menetrendi és az előrejelzett indulás különbségéből. A feltöltött `menetrend.html` mintája szerint az aktív sor 3 perc késéstől piros, korábbi közlekedésnél kék, egyébként zöld. A késésjelvény 1–2 percnél narancssárga, legalább 3 percnél piros, sietésnél kék. A késést teljes eltelt percekben (`+2 perc`), a korábbi közlekedést felfelé kerekítve (`-1 perc`) írja ki, ugyanúgy, mint a mintában. Menetrendi adatnál nem talál ki késést; élő idő, de hiányzó menetrendi idő esetén „késés nem ismert” felirat látszik.
 - Az elkövetkező 30 perc összes megfelelő indulását mutatja, nem csak az első ötöt. A vonatszámot a szolgáltató erre alkalmas mezőiből olvassa, és csak az első négy számjegyét jeleníti meg; ismeretlen számot nem talál ki. A teljes járatazonosítót használja az ismétlésvédelemhez, így azonos négyjegyű kijelzésű vonatok is külön maradnak.
 - A vonatszámra vagy a sorára kattintva az adott járat menetrendje nyílik meg a saját indulóállomásától (például Tököl vagy Ráckeve) a végállomásig, a Szigetszentmiklós előtti és már elhagyott megállókkal együtt. A `trip-details` kérés `includeStopTimes=all` beállítással fut, megálló- és időablakszűrés nélkül. A megállósorszámokat számként és szövegként is kezeli. Szigetszentmiklóst kiemeli; a lista az indulóállomásnál kezdődik. A fejlécben csak a vonatszám és az útvonal szerepel, „teljes menetrend” felirat és megállószám nélkül.
 - A menetrend külön érkezési és indulási oszlopot mutat. Mindkét időnél az adott élő előrejelzés élvez elsőbbséget; ahol ilyen nincs, a menetrendi idő látszik. Az „Élő adat” és „Menetrend” felirat jelzi az idő forrását.
@@ -28,7 +31,7 @@ A teljesen kattintás nélküli hanglejátszás a böngésző adott webhelyre é
 
 ## Memóriahasználat
 
-Nincs külső felületi keretrendszer, betöltött hangfájl vagy végtelenül növekvő napló. Legfeljebb 80 naplóbejegyzés, 64 vonatrekord, 64 irányellenőrzési eredmény és 128 ismétlésvédelmi bejegyzés marad meg; a lejárt elemek törlődnek. A teljes menetrendekből legfeljebb 16 járatot és összesen 2048 tömör megállórekordot tárol, legfeljebb négy óráig, járat és szolgáltatási nap szerint elkülönítve. A nagy API-válaszok teljes referenciaállományát nem őrzi meg. A menetrendablak bezárása megszakítja a hozzá tartozó kérést és felszabadítja a megjelenített sorokat. Egy újrahasznált AudioContext és csengetésenként egy oszcillátor működik, amelyek csomópontjai leállításkor lecsatlakoznak. A 20 másodperces végét a hangrendszer órája is kikényszeríti. Az oldal elhagyása leállítja az időzítőket, a hangot és a folyamatban lévő kéréseket.
+Nincs külső felületi keretrendszer, betöltött hangfájl vagy végtelenül növekvő napló. Legfeljebb 80 naplóbejegyzés, megállónként 64 vonatrekord, összesen 64 irányellenőrzési eredmény és 128 ismétlésvédelmi bejegyzés marad meg; a lejárt elemek törlődnek. A teljes menetrendekből legfeljebb 16 járatot és összesen 2048 tömör megállórekordot tárol, legfeljebb négy óráig, járat és szolgáltatási nap szerint elkülönítve. A nagy API-válaszok teljes referenciaállományát nem őrzi meg. A menetrendablak bezárása megszakítja a hozzá tartozó kérést és felszabadítja a megjelenített sorokat. Egy újrahasznált AudioContext és csengetésenként egy oszcillátor működik, amelyek csomópontjai leállításkor lecsatlakoznak. A 20 másodperces végét a hangrendszer órája is kikényszeríti. Az oldal elhagyása leállítja mindkét megálló időzítőit és kéréseit, valamint a hangot.
 
 ## Ellenőrzés
 
