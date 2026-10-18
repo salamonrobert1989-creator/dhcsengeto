@@ -59,11 +59,52 @@ test('a kijelzésből eltűnő, már elindult vonat +30 mp jelzése megmarad', (
   assert.equal(monitor.upcoming(now + 10000).length, 0);
   assert.equal(monitor.due(now + 35000, now - 1).ringing.length, 1);
 });
-test('csak menetrendi idő látható, de soha nem csenget', () => {
+test('élő adat nélkül a menetrendi indulás után is csenget', () => {
   const monitor = new M.Monitor();
   monitor.ingest([item({ predictedDepartureTime: undefined })], now);
   assert.equal(monitor.upcoming(now).length, 1);
+  assert.equal(monitor.pending(now).length, 1);
+  assert.equal(monitor.due(now + 29999, now - 1).ringing.length, 0);
+  const result = monitor.due(now + 30000, now - 1);
+  assert.equal(result.ringing.length, 1);
+  assert.equal(result.ringing[0].realtime, false);
+  assert.equal(monitor.due(now + 31000, now - 1).ringing.length, 0);
+});
+test('a letöltött menetrend friss adatkapcsolat nélkül is használható', () => {
+  const monitor = new M.Monitor();
+  monitor.ingest([item({ predictedDepartureTime: undefined, departureTime: seconds(now + 120000) })], now);
+  assert.equal(monitor.upcoming(now + 60000).length, 1);
+  assert.equal(monitor.pending(now + 60000)[0].time, now + 120000);
+  assert.equal(monitor.due(now + 150000, now - 1).ringing.length, 1);
+});
+test('az élő adat elsőbbséget kap a korábban kapott menetrendi idővel szemben', () => {
+  const monitor = new M.Monitor();
+  monitor.ingest([item({ predictedDepartureTime: undefined })], now);
+  monitor.ingest([{ ...item({ predictedDepartureTime: seconds(now + 20000) }), observedAt: now + 10000 }], now + 10000);
+  assert.equal(monitor.pending(now + 10000)[0].time, now + 20000);
+  assert.equal(monitor.pending(now + 10000)[0].realtime, true);
   assert.equal(monitor.due(now + 30000, now - 1).ringing.length, 0);
+  assert.equal(monitor.due(now + 50000, now - 1).ringing.length, 1);
+});
+test('eltűnő és elavuló élő adat esetén visszatér a menetrendi időre', () => {
+  const monitor = new M.Monitor();
+  const schedule = seconds(now + 90000);
+  monitor.ingest([item({ departureTime: schedule, predictedDepartureTime: seconds(now + 120000) })], now);
+  assert.equal(monitor.upcoming(now)[0].time, now + 120000);
+  assert.equal(monitor.upcoming(now + 46000)[0].time, now + 90000);
+  assert.equal(monitor.upcoming(now + 46000)[0].realtime, false);
+  assert.equal(monitor.due(now + 120000, now - 1).ringing.length, 1);
+  const missing = new M.Monitor();
+  missing.ingest([item({ departureTime: schedule, predictedDepartureTime: seconds(now + 120000) })], now);
+  missing.ingest([item({ departureTime: schedule, predictedDepartureTime: undefined })], now + 10000);
+  assert.equal(missing.pending(now + 10000)[0].time, now + 90000);
+});
+test('menetrendi jelzés után újra megjelenő élő adat nem csenget másodszor', () => {
+  const monitor = new M.Monitor();
+  monitor.ingest([item({ predictedDepartureTime: undefined })], now);
+  assert.equal(monitor.due(now + 30000, now - 1).ringing.length, 1);
+  monitor.ingest([{ ...item({ predictedDepartureTime: seconds(now + 30000) }), observedAt: now + 31000 }], now + 31000);
+  assert.equal(monitor.due(now + 60000, now - 1).ringing.length, 0);
 });
 test('a 30 perces kijelzés pontos határt használ, minden vonatot mutat', () => {
   const monitor = new M.Monitor();
@@ -77,6 +118,23 @@ test('nem gyárt vonatszámot egy dátumból vagy egy jármű azonosítójából
   assert.equal(M.trainNumber({ tripShortName: 'H1234' }), '1234');
   assert.equal(M.trainNumber({ id: 'BKK_20261018_123456', blockId: '234567' }), null);
 });
+test('a vonatszámból csak az első négy számjegy jelenik meg', () => {
+  assert.equal(M.trainNumber({ trainNumber: '001234' }), '0012');
+  assert.equal(M.trainNumber({ tripShortName: 'H12345678' }), '1234');
+  assert.equal(M.trainNumber({ shortName: '12345' }), '1234');
+  assert.equal(M.trainNumber({ id: 'BKK_H612345_run' }), '6123');
+  assert.equal(M.trainNumber({ blockId: 'BKK_H987654' }), '9876');
+});
+test('az azonos négyjegyű kijelzésű vonatok külön járatok maradnak', () => {
+  const monitor = new M.Monitor();
+  for (const id of ['BKK_H612345_run', 'BKK_H612346_run']) {
+    monitor.ingest([M.departure({ tripId: id, serviceDate: '2026-10-18', departureTime: seconds(now) }, { ...trip, id }, {}, now)], now);
+  }
+  assert.equal(monitor.upcoming(now).length, 2);
+  assert.equal(monitor.upcoming(now)[0].number, '6123');
+  assert.equal(monitor.upcoming(now)[1].number, '6123');
+  assert.equal(monitor.due(now + 30000, now - 1).ringing.length, 2);
+});
 test('kimaradó és törölt vonat nem csenget, indulási idő nélküli törlés is működik', () => {
   const monitor = new M.Monitor();
   monitor.ingest([item()], now);
@@ -87,9 +145,9 @@ test('kimaradó és törölt vonat nem csenget, indulási idő nélküli törlé
   assert.equal(monitor.due(now + 30000, now - 1).ringing.length, 0);
   assert.equal(M.cancelled({ scheduleRelationship: 'SKIPPED' }), true);
 });
-test('elavult adatból és alvás után nincs késői csengetés', () => {
+test('elavult élő adatból menetrend nélkül és alvás után nincs késői csengetés', () => {
   const stale = new M.Monitor();
-  stale.ingest([item({ predictedDepartureTime: seconds(now + 30000) })], now);
+  stale.ingest([item({ departureTime: undefined, predictedDepartureTime: seconds(now + 30000) })], now);
   assert.equal(stale.due(now + 60000, now - 1).ringing.length, 0);
   const sleeping = new M.Monitor();
   sleeping.ingest([item()], now);

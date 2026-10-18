@@ -39,7 +39,7 @@
     .sound-notice strong { font-size: 14px; color: #3730a3; }
     .sound-notice p { font-size: 12px; margin: 5px 0 0; line-height: 1.6; color: #475569; }
     .sound-notice[hidden] { display: none; }
-    .overview { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+    .overview { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
     .stat { padding: 16px 18px; background: white; border: 1px solid #e2e8f0; border-radius: 12px; }
     .stat-label { display: block; font-size: 11px; font-weight: 650; color: #64748b; margin-bottom: 8px; text-transform: uppercase; letter-spacing: .06em; }
     .stat-value { font-size: 17px; font-weight: 750; font-variant-numeric: tabular-nums; }
@@ -110,7 +110,7 @@
         <svg class="bell" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4M12 2V1"/></svg>
         <div role="status" aria-live="polite">
           <h2 id="alarm-title">Hangjelzés még nincs engedélyezve</h2>
-          <p id="alarm-subtitle">Indulás +30 mp · 20 mp csengetés</p>
+          <p id="alarm-subtitle">Szigetszentmiklós → Dunaharaszti külső</p>
         </div>
       </div>
       <button class="alarm-button" id="stop-alarm" disabled>CSENGETÉS KIKAPCSOLÁSA</button>
@@ -137,7 +137,6 @@
     <section class="overview" aria-label="Áttekintés">
       <div class="stat"><span class="stat-label">Pontos idő</span><span class="stat-value" id="clock">--:--:--</span></div>
       <div class="stat"><span class="stat-label">Következő jelzés</span><span class="stat-value" id="next-alarm">—</span></div>
-      <div class="stat"><span class="stat-label">Utolsó frissítés</span><span class="stat-value" id="last-update">—</span></div>
     </section>
     <section class="panel" aria-labelledby="list-title">
       <div class="panel-heading">
@@ -145,12 +144,12 @@
         <span class="count" id="train-count">0 vonat</span>
       </div>
       <div class="connection" id="connection" data-state="loading" role="status"><span class="dot"></span><span id="connection-text">Kapcsolódás a BKK FUTÁR adatforráshoz…</span></div>
-      <div id="trains"><div class="empty">Valós idejű indulások betöltése…</div></div>
+      <div id="trains"><div class="empty">Indulások betöltése…</div></div>
     </section>
     <footer>
-      <p>Jelzés a valós idejű indulási adat után <strong>30 másodperccel</strong>, legfeljebb <strong>20 másodpercig</strong>. A csengetés a felső gombbal bármikor leállítható.</p>
-      <p>Adatforrás: BKK FUTÁR · Frissítés 10 másodpercenként · Időzóna: Budapest. A csak menetrendi idővel rendelkező vonat nem csenget.</p>
-      <p>A jelzés az adatforrás indulási becslését követi. Tartsd nyitva és lehetőleg előtérben az oldalt; alvó eszközön vagy felfüggesztett böngészőlapon a pontos jelzés nem garantálható.</p>
+      <p>A csengetés a felső gombbal bármikor leállítható.</p>
+      <p>Adatforrás: BKK FUTÁR · Frissítés 10 másodpercenként · Időzóna: Budapest. Elsődlegesen élő adatok, ezek hiányában menetrend szerinti jelzés.</p>
+      <p>Tartsd nyitva és lehetőleg előtérben az oldalt; alvó eszközön vagy felfüggesztett böngészőlapon a pontos jelzés nem garantálható.</p>
     </footer>
   </main>
   <dialog id="log-dialog" aria-labelledby="log-title">
@@ -183,11 +182,11 @@
       function trainNumber(trip = {}) {
         for (const value of [trip.trainNumber, trip.tripShortName, trip.shortName]) {
           const match = String(value || '').match(/^H?(\d{2,8})$/i);
-          if (match) return match[1];
+          if (match) return match[1].slice(0, 4);
         }
         for (const value of [trip.blockId, trip.id]) {
           const match = String(value || '').match(/(?:^|[^a-z0-9])H(\d{3,6})(?=$|[^0-9])/i);
-          if (match) return match[1];
+          if (match) return match[1].slice(0, 4);
         }
         return null;
       }
@@ -208,10 +207,20 @@
           key: `${tripId}|${service}`, tripId,
           number: trainNumber(trip) || meta.number || null,
           headsign: String(trip.tripHeadsign || meta.headsign || 'Dunaharaszti külső felé'),
-          time, scheduled, realtime: Boolean(predicted), observedAt: now,
+          time, scheduled, predicted, realtime: Boolean(predicted), observedAt: now,
           cancelled: cancelled(item) || cancelled(trip),
           delay: predicted && scheduled ? Math.round((predicted - scheduled) / MINUTE) : 0
         };
+      }
+      function effectiveDeparture(item, now) {
+        if (item.predicted && now - item.observedAt <= FRESH_MS) return item;
+        if (item.scheduled) return item.realtime ? { ...item, time: item.scheduled, realtime: false, delay: 0 } : item;
+        return null;
+      }
+      function inRetentionWindow(item, now) {
+        const latest = Math.max(item.predicted || 0, item.scheduled || 0);
+        const earliest = Math.min(item.predicted || Infinity, item.scheduled || Infinity);
+        return latest >= now - 2 * MINUTE && earliest <= now + 35 * MINUTE;
       }
       class Monitor {
         constructor(remembered = []) {
@@ -221,7 +230,7 @@
         }
         prune(now) {
           for (const [key, expiry] of this.handled) if (expiry <= now) this.handled.delete(key);
-          for (const [key, item] of this.records) if (item.time < now - 2 * MINUTE || item.time > now + 35 * MINUTE) this.records.delete(key);
+          for (const [key, item] of this.records) if (!inRetentionWindow(item, now)) this.records.delete(key);
           while (this.handled.size > 128) this.handled.delete(this.handled.keys().next().value);
           while (this.records.size > 64) this.records.delete(this.records.keys().next().value);
         }
@@ -230,7 +239,7 @@
           // disappear from a subsequent stop response before its +30 s alarm.
           for (const item of items) {
             if (item.cancelled) this.records.delete(item.key);
-            else if (item.time >= now - 2 * MINUTE && item.time <= now + 35 * MINUTE) this.records.set(item.key, item);
+            else if (inRetentionWindow(item, now)) this.records.set(item.key, item);
           }
           this.prune(now);
         }
@@ -240,25 +249,27 @@
           }
         }
         upcoming(now) {
-          return [...this.records.values()].filter(item => item.time >= now && item.time <= now + 30 * MINUTE).sort((a, b) => a.time - b.time);
+          return [...this.records.values()].map(item => effectiveDeparture(item, now)).filter(item => item && item.time >= now && item.time <= now + 30 * MINUTE).sort((a, b) => a.time - b.time);
         }
         pending(now) {
-          return [...this.records.values()].filter(item => item.realtime && !this.handled.has(item.key) && item.time + 30000 >= now && now - item.observedAt <= FRESH_MS).sort((a, b) => a.time - b.time);
+          return [...this.records.values()].map(item => effectiveDeparture(item, now)).filter(item => item && !this.handled.has(item.key) && item.time + 30000 >= now).sort((a, b) => a.time - b.time);
         }
         due(now, armedAt = Infinity) {
           const ringing = [], missed = [];
-          for (const item of this.records.values()) {
+          for (const record of this.records.values()) {
+            const item = effectiveDeparture(record, now);
+            if (!item) continue;
             const dueAt = item.time + 30000;
-            if (!item.realtime || this.handled.has(item.key) || dueAt > now) continue;
+            if (this.handled.has(item.key) || dueAt > now) continue;
             this.handled.set(item.key, now + RETAIN_MS);
-            if (dueAt >= armedAt && now - dueAt <= LATE_MS && now - item.observedAt <= FRESH_MS) ringing.push(item);
+            if (dueAt >= armedAt && now - dueAt <= LATE_MS) ringing.push(item);
             else if (dueAt >= armedAt) missed.push(item);
           }
           this.prune(now);
           return { ringing, missed };
         }
       }
-      return Object.freeze({ MINUTE, FRESH_MS, normal, isOrigin, isTarget, isH6, trainNumber, direction, departure, cancelled, Monitor });
+      return Object.freeze({ MINUTE, FRESH_MS, normal, isOrigin, isTarget, isH6, trainNumber, direction, departure, effectiveDeparture, cancelled, Monitor });
     })();
   </script>
   <script>
@@ -336,7 +347,7 @@
         pollController = new AbortController();
         const signal = pollController.signal;
         $('refresh').disabled = true;
-        $('connection-text').textContent = 'Valós idejű adatok frissítése…';
+        $('connection-text').textContent = 'Menetrendi adatok frissítése…';
         try {
           if (!stopIds.length) await discoverStops(signal);
           const candidates = new Map();
@@ -378,7 +389,6 @@
           lastSuccess = Date.now();
           hasError = false;
           requestError = '';
-          $('last-update').textContent = time(lastSuccess);
           $('connection').dataset.state = verificationErrors ? 'error' : 'ok';
           if (verificationErrors) log(`${verificationErrors} vonat iránya nem ellenőrizhető; ezek nem csengetnek.`, 'error');
         } catch (error) {
@@ -423,7 +433,7 @@
           if (armedAt === Infinity) armedAt = Date.now();
           $('sound-notice').hidden = true;
           if (!activeAlarm) $('alarm-title').textContent = 'Csengetés készenlétben';
-          log('Hangjelzés engedélyezve. Indulás +30 mp, csengetés 20 mp.', 'success');
+          log('Hangjelzés engedélyezve.', 'success');
           acquireWakeLock();
           return true;
         } catch (error) { log(error.message, 'error'); $('alarm-title').textContent = 'A hangjelzés nem indítható'; return false; }
@@ -451,10 +461,10 @@
         oscillator.start(start);
         oscillator.stop(end); // Audio-clock deadline also works with throttled JS timers.
         $('alarm-banner').classList.add('ringing');
-        $('alarm-title').textContent = test ? 'Próbacsengés' : 'Vonat elindult · +30 mp';
-        $('alarm-subtitle').textContent = test ? 'A próba is 20 másodperc után leáll.' : `${items.map(item => item.number || 'Ismeretlen számú').join(', ')} · Szigetszentmiklós → Dunaharaszti külső`;
+        $('alarm-title').textContent = test ? 'Próbacsengés' : 'Vonat elindult';
+        $('alarm-subtitle').textContent = test ? 'A próbacsengés a felső gombbal leállítható.' : `${items.map(item => item.number || 'Ismeretlen számú').join(', ')} · Szigetszentmiklós → Dunaharaszti külső`;
         $('stop-alarm').disabled = false;
-        log(test ? 'Próbacsengés indult (20 mp).' : `Csengetés: ${items.map(item => item.number || item.tripId).join(', ')}.`, 'success');
+        log(test ? 'Próbacsengés indult.' : `Csengetés: ${items.map(item => item.number || item.tripId).join(', ')}.`, 'success');
       }
       function stopAlarm(manual = true) {
         if (!activeAlarm) return;
@@ -466,9 +476,9 @@
         gain.disconnect();
         $('alarm-banner').classList.remove('ringing');
         $('alarm-title').textContent = armedAt === Infinity ? 'Hangjelzés még nincs engedélyezve' : 'Csengetés készenlétben';
-        $('alarm-subtitle').textContent = 'Indulás +30 mp · 20 mp csengetés';
+        $('alarm-subtitle').textContent = 'Szigetszentmiklós → Dunaharaszti külső';
         $('stop-alarm').disabled = true;
-        log(manual ? 'A csengetést kikapcsoltad. A következő vonat jelzése aktív marad.' : 'A 20 másodperces csengetés véget ért.');
+        log(manual ? 'A csengetést kikapcsoltad. A következő vonat jelzése aktív marad.' : 'A csengetés véget ért.');
       }
       function paint(now) {
         $('clock').textContent = time(now);
@@ -477,23 +487,22 @@
         if (!inFlight) {
           const stale = lastSuccess && now - lastSuccess > TrainModel.FRESH_MS;
           $('connection').dataset.state = hasError || stale || verificationErrors ? 'error' : lastSuccess ? 'ok' : 'loading';
-          $('connection-text').textContent = hasError ? `${requestError} Újrapróbálás: ${Math.max(0, Math.ceil((nextPoll - now) / 1000))} mp.` : stale ? 'Elavult adatok · a bizonytalan jelzéseket kihagyjuk.' : verificationErrors ? `${verificationErrors} vonat iránya nem ellenőrizhető; ezek nem csengetnek.` : `Élő kapcsolat · frissítés ${Math.max(0, Math.ceil((nextPoll - now) / 1000))} mp múlva`;
+          $('connection-text').textContent = hasError ? `${requestError}${lastSuccess ? ' A letöltött menetrend alapján tovább figyelünk.' : ''} Újrapróbálás: ${Math.max(0, Math.ceil((nextPoll - now) / 1000))} mp.` : stale ? 'Nincs friss adatkapcsolat · figyelés a letöltött menetrend alapján.' : verificationErrors ? `${verificationErrors} vonat iránya nem ellenőrizhető; ezek nem csengetnek.` : `Kapcsolat rendben · frissítés ${Math.max(0, Math.ceil((nextPoll - now) / 1000))} mp múlva`;
         }
         const trains = monitor.upcoming(now);
-        const signature = JSON.stringify(trains.map(item => [item.key, item.time, item.number, item.realtime, item.delay, now - item.observedAt > TrainModel.FRESH_MS]));
+        const signature = JSON.stringify(trains.map(item => [item.key, item.time, item.number, item.realtime, item.delay]));
         if (signature !== listSignature) {
           listSignature = signature;
           const fragment = document.createDocumentFragment();
           for (const item of trains) {
-            const stale = now - item.observedAt > TrainModel.FRESH_MS;
-            const row = node('button', `train${!item.realtime || stale ? ' scheduled' : item.delay > 2 ? ' delayed' : ''}`);
+            const row = node('button', `train${!item.realtime ? ' scheduled' : item.delay > 2 ? ' delayed' : ''}`);
             row.type = 'button'; row.dataset.trip = item.tripId; row.dataset.departure = item.time;
             const info = node('div', '');
             info.append(node('div', 'train-number', item.number || 'Nincs vonatszám'), node('span', 'destination', item.headsign));
-            info.append(node('span', 'badge', stale ? 'Elavult adat · nincs jelzés' : item.realtime ? `Valós idejű${item.delay > 0 ? ` · +${item.delay} perc` : ''}` : 'Csak menetrendi adat · nincs jelzés'));
+            info.append(node('span', 'badge', item.realtime ? `Valós idejű${item.delay > 0 ? ` · +${item.delay} perc` : ''}` : 'Menetrend szerint'));
             const timing = node('div', 'train-time'), departure = node('div', ''), alarm = node('div', '');
             departure.append(node('span', 'time-label', 'INDULÁS'), node('span', 'time', time(item.time)), node('span', 'countdown'));
-            alarm.append(node('span', 'time-label', 'JELZÉS (+30 MP)'), node('span', 'alarm-time', item.realtime && !stale ? time(item.time + 30000) : '—'));
+            alarm.append(node('span', 'time-label', 'JELZÉS'), node('span', 'alarm-time', time(item.time + 30000)));
             timing.append(departure, alarm); row.append(info, timing); fragment.append(row);
           }
           if (!trains.length) fragment.append(node('div', 'empty', lastSuccess ? 'A következő 30 percben nincs jelzett H6-indulás Dunaharaszti külső felé.' : 'Az indulási lista az adatkapcsolat létrejötte után jelenik meg.'));
@@ -504,15 +513,13 @@
           const seconds = Math.max(0, Math.ceil((Number(row.dataset.departure) - now) / 1000));
           row.querySelector('.countdown').textContent = seconds >= 60 ? `${Math.floor(seconds / 60)} perc ${seconds % 60} mp múlva` : `${seconds} mp múlva`;
         }
-        if (activeAlarm) $('stop-alarm').textContent = `CSENGETÉS KIKAPCSOLÁSA (${Math.max(0, Math.ceil((activeAlarm.endsAt - now) / 1000))} mp)`;
-        else $('stop-alarm').textContent = 'CSENGETÉS KIKAPCSOLÁSA';
       }
       function tick() {
         const now = Date.now();
         const { ringing, missed } = monitor.due(now, armedAt);
         if (ringing.length || missed.length) remember();
         if (ringing.length) ring(ringing);
-        if (missed.length) log(`${missed.length} jelzés kimaradt: elavult adat vagy felfüggesztett böngészőlap.`, 'error');
+        if (missed.length) log(`${missed.length} jelzés időpontja már elmúlt; utólag nem csengetünk.`, 'error');
         if (activeAlarm && now >= activeAlarm.endsAt) stopAlarm(false);
         const second = Math.floor(now / 1000);
         if (second !== lastSecond) {
@@ -573,7 +580,7 @@
       window.addEventListener('online', refresh);
       window.addEventListener('pagehide', cleanup);
       window.addEventListener('pageshow', event => { if (event.persisted) start(); });
-      log('Dunahíd csengető elindult. Csak az ellenőrzött irány és valós idejű indulás csenget.');
+      log('Dunahíd csengető elindult. Élő adat hiányában a menetrend szerint csenget.');
       start();
     })();
   </script>
