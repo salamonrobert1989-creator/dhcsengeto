@@ -188,3 +188,96 @@ test('a vonat- és ismétlésvédelmi tárolók mérete korlátos', () => {
   assert.equal(monitor.records.size, 0);
   assert.equal(monitor.handled.size, 0);
 });
+
+const fullTrip = () => ({
+  entry: { stopTimes: [
+    { stopId: 'r', stopSequence: 0, departureTime: seconds(now - 600000) },
+    { stopId: 'g', stopSequence: 1, arrivalTime: seconds(now - 120000), departureTime: seconds(now - 100000), predictedArrivalTime: seconds(now - 90000) },
+    { stopId: 'a', stopSequence: 2, arrivalTime: seconds(now + 50000), departureTime: seconds(now + 60000), predictedArrivalTime: seconds(now + 70000), predictedDepartureTime: seconds(now + 80000) },
+    { stopId: 'b', stopSequence: 3, arrivalTime: seconds(now + 180000), departureTime: seconds(now + 190000) },
+    { stopId: 'c', stopSequence: 4, arrivalTime: seconds(now + 600000) }
+  ] },
+  references: { trips: { [trip.id]: trip }, stops: { ...stops, r: { name: 'Ráckeve' }, g: { name: 'Szigetszentmiklós-Gyártelep' } } }
+});
+
+test('a teljes menetrend megtartja a Szigetszentmiklós előtti megállókat is', () => {
+  const snapshot = M.tripSchedule(fullTrip(), trip.id, now);
+  assert.equal(snapshot.rows.length, 5);
+  assert.equal(snapshot.rows[0].name, 'Ráckeve');
+  assert.equal(snapshot.rows[2].name, 'Szigetszentmiklós');
+  assert.equal(snapshot.rows[4].name, 'Közvágóhíd');
+  assert.equal(snapshot.number, '6123');
+});
+
+test('a teljes menetrend a megállósorrendet követi, és nincs 100 megállós levágás', () => {
+  const data = fullTrip();
+  data.entry.stopTimes.reverse();
+  assert.equal(M.tripSchedule(data, trip.id, now).rows[0].name, 'Ráckeve');
+  data.entry.stopTimes = Array.from({ length: 140 }, (_, index) => ({ stopId: `stop-${index}`, stopSequence: index, departureTime: seconds(now + index * 1000) }));
+  assert.equal(M.tripSchedule(data, trip.id, now).rows.length, 140);
+});
+
+test('az érkezési és indulási cella külön-külön az élő időt részesíti előnyben', () => {
+  const snapshot = M.tripSchedule(fullTrip(), trip.id, now);
+  const origin = snapshot.rows[2];
+  assert.equal(M.timetableTime(origin, 'arrival', true).time, now + 70000);
+  assert.equal(M.timetableTime(origin, 'departure', true).time, now + 80000);
+  assert.equal(M.timetableTime(origin, 'arrival', true).realtime, true);
+  const mixed = snapshot.rows[1];
+  assert.equal(M.timetableTime(mixed, 'arrival', true).time, now - 90000);
+  assert.equal(M.timetableTime(mixed, 'arrival', true).realtime, true);
+  assert.equal(M.timetableTime(mixed, 'departure', true).time, now - 100000);
+  assert.equal(M.timetableTime(mixed, 'departure', true).realtime, false);
+});
+
+test('mentett megnyitáskor csak a menetrendi idők jelennek meg, hiányzó időt nem talál ki', () => {
+  const snapshot = M.tripSchedule(fullTrip(), trip.id, now);
+  assert.equal(M.timetableTime(snapshot.rows[2], 'arrival', false).time, now + 50000);
+  assert.equal(M.timetableTime(snapshot.rows[2], 'departure', false).time, now + 60000);
+  assert.equal(M.timetableTime(snapshot.rows[2], 'arrival', false).realtime, false);
+  assert.equal(M.timetableTime(snapshot.rows[0], 'arrival', true).time, null);
+  assert.equal(M.timetableTime(snapshot.rows[4], 'departure', true).time, null);
+});
+
+test('élő időadat nélküli teljes menetrend is használható', () => {
+  const data = fullTrip();
+  for (const stop of data.entry.stopTimes) { delete stop.predictedArrivalTime; delete stop.predictedDepartureTime; }
+  const snapshot = M.tripSchedule(data, trip.id, now);
+  assert.equal(M.timetableTime(snapshot.rows[2], 'arrival', true).time, now + 50000);
+  assert.equal(M.timetableTime(snapshot.rows[2], 'departure', true).realtime, false);
+});
+
+test('a mentett menetrendek járatonként és szolgáltatási naponként elkülönülnek', () => {
+  const cache = new M.ScheduleCache();
+  const today = M.tripSchedule(fullTrip(), trip.id, now);
+  cache.put('trip|2026-10-18', today, now);
+  assert.equal(cache.get('trip|2026-10-18', now), today);
+  assert.equal(cache.get('trip|2026-10-19', now), null);
+  assert.equal(cache.get('other|2026-10-18', now), null);
+});
+
+test('a teljes menetrendek tárolóját a járatszám és az összes megállószám is korlátozza', () => {
+  const cache = new M.ScheduleCache(3, 12);
+  for (let i = 0; i < 40; i++) cache.put(`trip-${i}`, M.tripSchedule(fullTrip(), trip.id, now), now);
+  assert.ok(cache.entries.size <= 3);
+  assert.ok(cache.stopCount <= 12);
+  assert.equal(cache.get('trip-0', now), null);
+  assert.ok(cache.get('trip-39', now));
+  cache.put('oversized', { rows: Array(13).fill({}), fetchedAt: now }, now);
+  assert.equal(cache.get('oversized', now), null);
+  assert.ok(cache.stopCount <= 12);
+});
+
+test('a lejárt teljes menetrendek felszabadulnak', () => {
+  const cache = new M.ScheduleCache();
+  cache.put('trip', M.tripSchedule(fullTrip(), trip.id, now), now);
+  assert.ok(cache.get('trip', now + 3 * 60 * 60000));
+  assert.equal(cache.get('trip', now + 4 * 60 * 60000), null);
+  assert.equal(cache.entries.size, 0);
+  assert.equal(cache.stopCount, 0);
+});
+
+test('hibás vagy üres teljes menetrend nem írható felül érvényes adatként', () => {
+  assert.throws(() => M.tripSchedule({ entry: { stopTimes: [] } }, trip.id, now));
+  assert.throws(() => M.tripSchedule({}, trip.id, now));
+});

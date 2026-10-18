@@ -75,9 +75,17 @@
     .log-entry { font-size: 12px; line-height: 1.6; padding: 8px; border-bottom: 1px solid #e2e8f0; overflow-wrap: anywhere; }
     .log-entry.error { color: #be123c; }
     .log-entry.success { color: #047857; }
-    .stop { display: flex; justify-content: space-between; gap: 12px; padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; }
-    .stop.current { background: #dcfce7; font-weight: 750; }
-    .stop time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .trip-summary { font-size: 13px; line-height: 1.6; margin: 0 0 8px; overflow-wrap: anywhere; }
+    .trip-status { font-size: 12px; color: #64748b; margin: 0 0 16px; line-height: 1.6; }
+    .timetable { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .timetable th, .timetable td { text-align: left; padding: 10px 7px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+    .timetable thead { background: #f8fafc; color: #475569; font-size: 11px; }
+    .timetable th[scope="row"] { font-weight: 550; overflow-wrap: anywhere; }
+    .timetable .current { background: #dcfce7; }
+    .timetable .current th { font-weight: 750; }
+    .timetable time { font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; }
+    .time-source { display: block; margin-top: 4px; color: #64748b; font-size: 10px; font-weight: 500; }
+    .time-source.live { color: #047857; }
     @media (max-width: 720px) {
       .header-inner { align-items: flex-start; flex-direction: column; }
       .toolbar { justify-content: flex-start; }
@@ -147,7 +155,7 @@
     <div class="dialog-body" id="log-entries"></div>
   </dialog>
   <dialog id="trip-dialog" aria-labelledby="trip-title">
-    <div class="dialog-heading"><h2 id="trip-title">Vonat menetrendje</h2><button data-close="trip-dialog" aria-label="Menetrend bezárása">Bezárás</button></div>
+    <div class="dialog-heading"><h2 id="trip-title">A vonat teljes menetrendje</h2><button data-close="trip-dialog" aria-label="Menetrend bezárása">Bezárás</button></div>
     <div class="dialog-body" id="trip-content"></div>
   </dialog>
 
@@ -212,6 +220,47 @@
         const earliest = Math.min(item.predicted || Infinity, item.scheduled || Infinity);
         return latest >= now - 2 * MINUTE && earliest <= now + 35 * MINUTE;
       }
+      function tripSchedule(data, tripId, now) {
+        const times = (data.entry || {}).stopTimes;
+        if (!Array.isArray(times) || !times.length) throw new Error('Nem érkezett teljes menetrendi megállólista.');
+        const refs = data.references || {}, stops = refs.stops || {};
+        const trip = (refs.trips || {})[tripId] || data.entry.trip || {};
+        const ordered = [...times];
+        if (ordered.every(item => Number.isFinite(item.stopSequence))) ordered.sort((a, b) => a.stopSequence - b.stopSequence);
+        const rows = ordered.map(item => ({
+          stopId: String(item.stopId || ''), name: String((stops[item.stopId] || {}).name || item.stopId || 'Ismeretlen megálló'),
+          scheduledArrival: positiveTime(item.arrivalTime || item.scheduledArrivalTime),
+          scheduledDeparture: positiveTime(item.departureTime || item.scheduledDepartureTime),
+          predictedArrival: positiveTime(item.predictedArrivalTime),
+          predictedDeparture: positiveTime(item.predictedDepartureTime),
+          cancelled: cancelled(item)
+        }));
+        return { tripId, number: trainNumber(trip), rows, fetchedAt: now };
+      }
+      function timetableTime(row, kind, useRealtime) {
+        const predicted = kind === 'arrival' ? row.predictedArrival : row.predictedDeparture;
+        const scheduled = kind === 'arrival' ? row.scheduledArrival : row.scheduledDeparture;
+        return { time: useRealtime && predicted ? predicted : scheduled, realtime: Boolean(useRealtime && predicted) };
+      }
+      class ScheduleCache {
+        constructor(limit = 16, maxStops = 2048) { this.entries = new Map(); this.stopCount = 0; this.limit = limit; this.maxStops = maxStops; }
+        remove(key) {
+          const item = this.entries.get(key);
+          if (item) { this.stopCount -= item.rows.length; this.entries.delete(key); }
+        }
+        prune(now) {
+          for (const [key, item] of this.entries) if (now - item.fetchedAt >= RETAIN_MS) this.remove(key);
+        }
+        get(key, now) { this.prune(now); return this.entries.get(key) || null; }
+        put(key, snapshot, now) {
+          this.prune(now);
+          if (!snapshot.rows.length || snapshot.rows.length > this.maxStops) return;
+          this.remove(key);
+          this.entries.set(key, snapshot);
+          this.stopCount += snapshot.rows.length;
+          while (this.entries.size > this.limit || this.stopCount > this.maxStops) this.remove(this.entries.keys().next().value);
+        }
+      }
       class Monitor {
         constructor(remembered = []) {
           this.records = new Map();
@@ -259,7 +308,7 @@
           return { ringing, missed };
         }
       }
-      return Object.freeze({ MINUTE, FRESH_MS, normal, isOrigin, isTarget, isH6, trainNumber, direction, departure, effectiveDeparture, cancelled, Monitor });
+      return Object.freeze({ MINUTE, FRESH_MS, normal, isOrigin, isTarget, isH6, trainNumber, direction, departure, effectiveDeparture, tripSchedule, timetableTime, ScheduleCache, cancelled, Monitor });
     })();
   </script>
   <script>
@@ -277,6 +326,7 @@
       try { saved = JSON.parse(sessionStorage.getItem('dunahid-handled-v1') || '[]'); } catch { /* Storage is optional, including in file:// mode. */ }
       const monitor = new TrainModel.Monitor(Array.isArray(saved) ? saved : []);
       const tripCache = new Map();
+      const scheduleCache = new TrainModel.ScheduleCache();
       let stopIds = [], inFlight = false, pollTimer = null, tickTimer = null, pollController = null, detailController = null;
       let lastSuccess = 0, nextPoll = 0, hasError = false, requestError = '', verificationErrors = 0;
       let audio = null, armedAt = Infinity, activeAlarm = null, stopped = false, lastSecond = -1, listSignature = '', wakeLock = null;
@@ -318,17 +368,23 @@
         stopIds = [...ids];
         log(`Megálló azonosítva: Szigetszentmiklós (${stopIds.length} megállóhely).`);
       }
-      async function tripMeta(tripId, signal) {
-        const cached = tripCache.get(tripId);
+      function fullTrip(tripId, signal) {
+        // Explicitly request every stop, including those before the watched
+        // station and already passed stops. No stopId or time-window filter.
+        return api('trip-details', { tripId, includeStopTimes: 'all', includeReferences: true }, signal);
+      }
+      async function tripMeta(tripId, key, signal) {
+        const cached = tripCache.get(key);
         if (cached && cached.expiry > Date.now()) return cached;
-        const data = await api('trip-details', { tripId }, signal);
+        const data = await fullTrip(tripId, signal);
         if (!data.entry || !Array.isArray(data.entry.stopTimes) || !data.entry.stopTimes.length) throw new Error('Nem érkezett ellenőrizhető megállósorrend.');
         const refs = data.references || {};
         if (data.entry.stopTimes.some(item => !((refs.stops || {})[item.stopId] || {}).name)) throw new Error('Hiányos megállósorrend.');
         const trip = (refs.trips || {})[tripId] || data.entry.trip || {};
         const meta = { allowed: TrainModel.direction(data.entry, refs.stops || {}), number: TrainModel.trainNumber(trip), headsign: trip.tripHeadsign || '', expiry: Date.now() + CACHE_MS };
-        tripCache.delete(tripId);
-        tripCache.set(tripId, meta);
+        if (meta.allowed) scheduleCache.put(key, TrainModel.tripSchedule(data, tripId, Date.now()), Date.now());
+        tripCache.delete(key);
+        tripCache.set(key, meta);
         while (tripCache.size > 64) tripCache.delete(tripCache.keys().next().value);
         return meta;
       }
@@ -358,7 +414,7 @@
               if (!trip || !TrainModel.isH6(trip, routes)) continue;
               const observedAt = Date.now();
               const value = TrainModel.departure(item, trip, {}, observedAt);
-              const known = tripCache.get(item.tripId);
+              const known = value && tripCache.get(value.key);
               if (value && known && known.allowed && known.expiry > observedAt) monitor.ingest([TrainModel.departure(item, trip, known, observedAt)], observedAt);
               if (value && value.time >= observedAt - 120000 && value.time <= observedAt + 30 * 60000) candidates.set(value.key, { item, trip, observedAt });
             }
@@ -366,11 +422,11 @@
           if (candidates.size > 64) throw new Error('Az adatforrás szokatlanul sok indulást adott.');
           verificationErrors = 0;
           const items = [];
-          for (const { item, trip, observedAt } of candidates.values()) {
+          for (const [key, { item, trip, observedAt }] of candidates) {
             try {
               // Both directions share a route name. Only the ordered stops prove
               // that this particular trip proceeds towards Dunaharaszti külső.
-              const meta = await tripMeta(item.tripId, signal);
+              const meta = await tripMeta(item.tripId, key, signal);
               if (meta.allowed) items.push(TrainModel.departure(item, trip, meta, observedAt));
             } catch (error) {
               if (signal.aborted) throw error;
@@ -526,7 +582,7 @@
           const fragment = document.createDocumentFragment();
           for (const item of trains) {
             const row = node('button', `train${!item.realtime ? ' scheduled' : item.delay > 2 ? ' delayed' : ''}`);
-            row.type = 'button'; row.dataset.trip = item.tripId; row.dataset.departure = item.time;
+            row.type = 'button'; row.dataset.trip = item.tripId; row.dataset.key = item.key; row.dataset.departure = item.time;
             const info = node('div', '');
             info.append(node('div', 'train-number', item.number || 'Nincs vonatszám'), node('span', 'destination', item.headsign));
             info.append(node('span', 'badge', item.realtime ? `Valós idejű${item.delay > 0 ? ` · +${item.delay} perc` : ''}` : 'Menetrend szerint'));
@@ -554,28 +610,61 @@
         if (second !== lastSecond) {
           lastSecond = second;
           for (const [id, meta] of tripCache) if (meta.expiry <= now) tripCache.delete(id);
+          scheduleCache.prune(now);
           paint(now);
         }
       }
-      async function showTrip(tripId) {
+      function renderTrip(snapshot, useRealtime, status) {
+        const fragment = document.createDocumentFragment(), rows = snapshot.rows;
+        fragment.append(node('p', 'trip-summary', `${rows[0].name} → ${rows[rows.length - 1].name} · ${rows.length} megálló`));
+        fragment.append(node('p', 'trip-status', status));
+        const table = node('table', 'timetable'), head = node('thead'), headings = node('tr'), body = node('tbody');
+        table.setAttribute('aria-label', 'A vonat teljes menetrendje');
+        for (const label of ['Megálló', 'Érkezés', 'Indulás']) { const cell = node('th', '', label); cell.scope = 'col'; headings.append(cell); }
+        head.append(headings);
+        for (const row of rows) {
+          const line = node('tr', TrainModel.isOrigin(row.name) ? 'current' : '');
+          const name = node('th', '', row.name); name.scope = 'row';
+          if (row.cancelled) name.append(node('span', 'time-source', 'Kimaradó megálló'));
+          line.append(name);
+          for (const kind of ['arrival', 'departure']) {
+            const value = TrainModel.timetableTime(row, kind, useRealtime), cell = node('td');
+            cell.append(node('time', '', value.time ? time(value.time) : '—'));
+            if (value.time) cell.append(node('span', `time-source${value.realtime ? ' live' : ''}`, value.realtime ? 'Élő adat' : 'Menetrend'));
+            line.append(cell);
+          }
+          body.append(line);
+        }
+        table.append(head, body); fragment.append(table);
+        const scroll = $('trip-content').scrollTop;
+        $('trip-content').replaceChildren(fragment);
+        $('trip-content').scrollTop = scroll;
+        $('trip-title').textContent = snapshot.number ? `${snapshot.number} · teljes menetrend` : 'A vonat teljes menetrendje';
+      }
+      async function showTrip(tripId, key) {
         if (detailController) detailController.abort();
         detailController = new AbortController();
         const signal = detailController.signal;
+        const cached = scheduleCache.get(key, Date.now());
         $('trip-content').textContent = 'Menetrend betöltése…';
-        $('trip-dialog').showModal();
+        $('trip-content').scrollTop = 0;
+        $('trip-title').textContent = 'A vonat teljes menetrendje';
+        if (!$('trip-dialog').open) $('trip-dialog').showModal();
+        if (cached) renderTrip(cached, false, 'Mentett menetrend · friss adatok betöltése…');
         try {
-          const data = await api('trip-details', { tripId }, signal);
-          const stops = (data.references || {}).stops || {}, fragment = document.createDocumentFragment();
-          for (const item of ((data.entry || {}).stopTimes || []).slice(0, 100)) {
-            const name = (stops[item.stopId] || {}).name || item.stopId;
-            const row = node('div', `stop${TrainModel.isOrigin(name) ? ' current' : ''}`);
-            const departure = item.predictedDepartureTime || item.departureTime || item.predictedArrivalTime || item.arrivalTime;
-            row.append(node('span', '', name), node('time', '', departure ? time(departure * 1000) : '—'));
-            fragment.append(row);
+          const data = await fullTrip(tripId, signal);
+          if (!signal.aborted) {
+            const snapshot = TrainModel.tripSchedule(data, tripId, Date.now());
+            scheduleCache.put(key, snapshot, Date.now());
+            const live = snapshot.rows.some(row => row.predictedArrival || row.predictedDeparture);
+            renderTrip(snapshot, true, live ? 'Az élő időadatok elsőbbséget élveznek; a többi idő menetrend szerinti.' : 'Menetrend szerinti adatok · jelenleg nincs élő időadat.');
           }
-          if (!fragment.childNodes.length) fragment.append(node('p', 'muted', 'Nincs megállóadat ehhez a vonathoz.'));
-          if (!signal.aborted) $('trip-content').replaceChildren(fragment);
-        } catch (error) { if (!signal.aborted) $('trip-content').textContent = `Nem tölthető be a menetrend. ${error instanceof TypeError ? 'Ellenőrizd az adatkapcsolatot.' : error.message}`; }
+        } catch (error) {
+          if (!signal.aborted) {
+            if (cached) renderTrip(cached, false, 'Mentett menetrend · az élő adatok jelenleg nem érhetők el.');
+            else $('trip-content').textContent = `Nem tölthető be a teljes menetrend. ${error instanceof TypeError ? 'Ellenőrizd az adatkapcsolatot.' : error.message}`;
+          }
+        }
         finally { if (detailController && detailController.signal === signal) detailController = null; }
       }
       function start() {
@@ -602,7 +691,7 @@
       $('stop-alarm').addEventListener('click', () => stopAlarm(true));
       $('refresh').addEventListener('click', refresh);
       $('open-log').addEventListener('click', () => $('log-dialog').showModal());
-      $('trains').addEventListener('click', event => { const row = event.target.closest('[data-trip]'); if (row) showTrip(row.dataset.trip); });
+      $('trains').addEventListener('click', event => { const row = event.target.closest('[data-trip]'); if (row) showTrip(row.dataset.trip, row.dataset.key); });
       function clearTrip() { if (detailController) detailController.abort(); $('trip-content').replaceChildren(); }
       for (const button of document.querySelectorAll('[data-close]')) button.addEventListener('click', () => { if (button.dataset.close === 'trip-dialog') clearTrip(); $(button.dataset.close).close(); });
       $('trip-dialog').addEventListener('close', clearTrip);
