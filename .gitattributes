@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.exe binary
+# Preserve the redistributed Microsoft notices byte for byte.
+downloads/WebView2-*.txt -text -whitespace

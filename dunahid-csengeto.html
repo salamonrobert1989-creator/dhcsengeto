@@ -367,6 +367,7 @@
       const API_KEY = '8a0369c6-0f54-4e5c-bab5-3ac20cb0bc58';
       const API_BASE = 'https://futar.bkk.hu/api/query/v1/ws/otp/api/where/';
       const POLL_MS = 10000, CACHE_MS = 4 * 60 * 60000;
+      const desktopMode = window.__DUNAHID_DESKTOP__ === true;
       const $ = id => document.getElementById(id);
       const timeFormat = new Intl.DateTimeFormat('hu-HU', { timeZone: 'Europe/Budapest', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
       const time = value => timeFormat.format(new Date(value));
@@ -379,7 +380,7 @@
       const tripCache = new Map();
       const scheduleCache = new TrainModel.ScheduleCache();
       let stopIds = [], inFlight = false, pollTimer = null, tickTimer = null, pollController = null, detailController = null;
-      let southStopIds = [], southInFlight = false, southPollTimer = null, southController = null, southLastSuccess = 0, southError = '';
+      let southStopIds = [], southInFlight = false, southPollTimer = null, southController = null, southLastSuccess = 0, southNextPoll = 0, southError = '';
       let lastSuccess = 0, nextPoll = 0, hasError = false, requestError = '', verificationErrors = 0;
       let audio = null, armedAt = Infinity, activeAlarm = null, stopped = false, lastSecond = -1, listSignature = '', wakeLock = null;
       const soundGestureEvents = ['pointerup', 'touchend', 'click', 'keydown'];
@@ -508,7 +509,7 @@
           $('refresh').disabled = false;
           if (!stopped) {
             nextPoll = Date.now() + POLL_MS;
-            pollTimer = setTimeout(refresh, POLL_MS);
+            if (!desktopMode) pollTimer = setTimeout(refresh, POLL_MS);
             paint(Date.now());
           }
         }
@@ -570,7 +571,8 @@
           if (!stopped) {
             $('south-status').textContent = southError;
             $('south-status').hidden = !southError;
-            southPollTimer = setTimeout(refreshSouth, POLL_MS);
+            southNextPoll = Date.now() + POLL_MS;
+            if (!desktopMode) southPollTimer = setTimeout(refreshSouth, POLL_MS);
             paint(Date.now());
           }
         }
@@ -745,7 +747,9 @@
         }
       }
       function tick() {
+        if (stopped) return;
         const now = Date.now();
+        if (desktopMode && audio && audio.state !== 'running') tryAutomaticSound();
         if (activeAlarm && now >= activeAlarm.endsAt) stopAlarm(false);
         const { ringing, missed } = monitor.due(now, armedAt);
         if (ringing.length && ring(ringing)) {
@@ -762,6 +766,12 @@
           scheduleCache.prune(now);
           southMonitor.prune(now);
           paint(now);
+        }
+        // The EXE supplies this heartbeat from a Windows timer, independently
+        // of browser background-tab timers. The HTML version keeps its timers.
+        if (desktopMode) {
+          if (!inFlight && now >= nextPoll) void refresh();
+          if (!southInFlight && now >= southNextPoll) void refreshSouth();
         }
       }
       function renderTrip(snapshot, useRealtime, status) {
@@ -821,13 +831,19 @@
         if (tickTimer) return;
         stopped = false;
         tryAutomaticSound();
-        tickTimer = setInterval(tick, 250);
+        if (desktopMode) {
+          window.addEventListener('dunahid-desktop-tick', tick);
+          tickTimer = true;
+        } else tickTimer = setInterval(tick, 250);
         paint(Date.now());
         refreshAll();
       }
       function cleanup() {
         stopped = true;
-        clearTimeout(pollTimer); clearInterval(tickTimer); tickTimer = null;
+        clearTimeout(pollTimer);
+        if (desktopMode) window.removeEventListener('dunahid-desktop-tick', tick);
+        else clearInterval(tickTimer);
+        tickTimer = null;
         clearTimeout(southPollTimer);
         if (pollController) pollController.abort();
         if (southController) southController.abort();

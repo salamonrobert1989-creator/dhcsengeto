@@ -7,7 +7,7 @@ const path = require('node:path');
 const http = require('node:http');
 const { chromium } = require('playwright');
 
-let server, browser, address;
+let server, browser, desktopBrowser, address;
 before(async () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'dunahid-csengeto.html'));
   server = http.createServer((request, response) => {
@@ -18,14 +18,16 @@ before(async () => {
   address = `http://127.0.0.1:${server.address().port}`;
   const executablePath = process.env.CHROMIUM_EXECUTABLE_PATH || (fs.existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : undefined);
   browser = await chromium.launch({ executablePath, headless: true, args: ['--no-sandbox', '--autoplay-policy=document-user-activation-required'] });
+  desktopBrowser = await chromium.launch({ executablePath, headless: true, args: ['--no-sandbox', '--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-features=CalculateNativeWinOcclusion'] });
 });
 after(async () => {
   if (browser) await browser.close();
+  if (desktopBrowser) await desktopBrowser.close();
   if (server) await new Promise(resolve => server.close(resolve));
 });
 
 async function setup(t, options = {}) {
-  const context = await browser.newContext();
+  const context = await (options.desktop ? desktopBrowser : browser).newContext();
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -34,6 +36,7 @@ async function setup(t, options = {}) {
   const base = Date.parse('2026-10-19T12:00:00Z');
   await page.clock.install({ time: new Date(base - 1000) });
   await page.clock.pauseAt(new Date(base));
+  if (options.desktop) await page.addInitScript(() => Object.defineProperty(window, '__DUNAHID_DESKTOP__', { value: true }));
   await page.addInitScript(() => {
     const NativeAudioContext = window.AudioContext;
     window.__sound = { contexts: [], starts: [], disconnected: 0, failNext: false };
@@ -60,7 +63,7 @@ async function setup(t, options = {}) {
       }
     };
   });
-  const state = { gone: false, failed: false, cancelled: false, ...options };
+  const state = { gone: false, failed: false, cancelled: false, requests: { north: 0, south: 0 }, ...options };
   const stops = { s: { id: 's', name: 'Szigetszentmiklós' }, d: { id: 'd', name: 'Dunaharaszti külső' }, r: { id: 'r', name: 'Ráckeve' } };
   const trips = { north: { id: 'north', routeId: 'H6', trainNumber: '123456', tripHeadsign: 'Közvágóhíd' }, south: { id: 'south', routeId: 'H6', trainNumber: '987654', tripHeadsign: 'Ráckeve' } };
   const refs = { stops, trips, routes: { H6: { shortName: 'H6' } } };
@@ -71,6 +74,7 @@ async function setup(t, options = {}) {
     let entry;
     if (url.pathname.includes('/search.')) entry = { stopIds: [south ? 'd' : 's'] };
     else if (url.pathname.includes('/arrivals-and-departures-for-stop.')) {
+      state.requests[south ? 'south' : 'north']++;
       const row = {
         tripId: south ? 'south' : 'north', serviceDate: '2026-10-19',
         departureTime: (base + (state.scheduledOffset ?? 10000)) / 1000,
@@ -226,4 +230,62 @@ test('újratöltés és az oldal elhagyása nem duplázza meg a jelzést, nem ha
   await page.evaluate(() => dispatchEvent(new PageTransitionEvent('pagehide')));
   await page.waitForFunction(() => window.__sound.contexts[0].state === 'closed');
   assert.equal(await read('window.__sound.disconnected'), 1);
+});
+
+test('EXE: a Windows-időzítő jelére, böngésző-időzítők nélkül is csenget és leáll', async t => {
+  const { page, state, read, starts, handled, waitRead } = await setup(t, { desktop: true, south: true });
+  assert.equal(await read('navigator.userActivation.hasBeenActive'), false);
+  await waitRead("window.__sound.contexts[0].state === 'running'");
+  await page.clock.runFor(40000);
+  assert.equal(await starts(), 0, 'a böngésző saját időzítője EXE módban nem hajtja az alkalmazást');
+  assert.equal(state.requests.north, 1);
+  assert.equal(state.requests.south, 1);
+  await read("window.dispatchEvent(new Event('dunahid-desktop-tick'))");
+  assert.equal(await starts(), 1);
+  assert.equal(await handled(), 1);
+  await page.clock.runFor(20000);
+  await read("window.dispatchEvent(new Event('dunahid-desktop-tick'))");
+  assert.equal(await page.locator('#alarm-banner.ringing').count(), 0);
+  assert.equal(await starts(), 1);
+});
+
+test('EXE: a Windows-időzítő mindkét megálló élő adatait frissíti és átütemezi a jelzést', async t => {
+  const { page, state, read, starts, waitRead } = await setup(t, { desktop: true, south: true });
+  state.predictedOffset = 30000;
+  await page.clock.runFor(10000);
+  await read("window.dispatchEvent(new Event('dunahid-desktop-tick'))");
+  await waitRead("document.querySelector('#next-alarm').textContent === '14:01:00'");
+  assert.equal(state.requests.north, 2);
+  assert.equal(state.requests.south, 2);
+  await page.clock.runFor(30000);
+  await read("window.dispatchEvent(new Event('dunahid-desktop-tick'))");
+  assert.equal(await starts(), 0, 'a régi menetrendi időpontban nem csenget');
+  await page.clock.runFor(20000);
+  await read("window.dispatchEvent(new Event('dunahid-desktop-tick'))");
+  assert.equal(await starts(), 1);
+  assert.equal(await page.locator('#alarm-subtitle').textContent(), '1234 · Szigetszentmiklós → Dunaharaszti külső');
+});
+
+test('EXE: bezárás után a Windows-időzítő további üzenetei sem indítanak hangot vagy kérést', async t => {
+  const { page, state, read, starts, waitRead } = await setup(t, { desktop: true });
+  await read("dispatchEvent(new PageTransitionEvent('pagehide'))");
+  await waitRead("window.__sound.contexts[0].state === 'closed'");
+  const requests = { ...state.requests };
+  await page.clock.runFor(40000);
+  await read("window.dispatchEvent(new Event('dunahid-desktop-tick'))");
+  assert.equal(await starts(), 0);
+  assert.deepEqual(state.requests, requests);
+});
+
+test('EXE: átmenetileg felfüggesztett hangot kattintás nélkül folytatja', async t => {
+  const { page, read, waitRead, starts, handled } = await setup(t, { desktop: true });
+  await waitRead("window.__sound.contexts[0].state === 'running'");
+  await page.evaluate(() => window.__sound.contexts[0].suspend());
+  await page.clock.runFor(40000);
+  await read("window.dispatchEvent(new Event('dunahid-desktop-tick'))");
+  await waitRead("window.__sound.contexts[0].state === 'running'");
+  await page.clock.runFor(250);
+  await read("window.dispatchEvent(new Event('dunahid-desktop-tick'))");
+  assert.equal(await starts(), 1);
+  assert.equal(await handled(), 1);
 });

@@ -2,6 +2,18 @@
 
 Önálló, magyar nyelvű HTML-program a H6-os HÉV indulásainak követésére Szigetszentmiklósnál és Dunaharaszti külsőnél. A csengetés továbbra is csak a Szigetszentmiklósról Dunaharaszti külső felé induló vonatokhoz tartozik.
 
+## Windows 11 alkalmazás
+
+**[Dunahíd csengető EXE letöltése](https://github.com/salamonrobert1989-creator/dhcsengeto/raw/refs/heads/main/downloads/Dunahid-csengeto.exe)**
+
+Töltsd le és indítsd el a `Dunahid-csengeto.exe` fájlt. Nem kell telepíteni vagy mellé másolni a HTML-t. A kinézet, az indulási listák, az élő és menetrendi adatok, a késések, a teljes járatmenetrend, a próbacsengés és a leállítógomb ugyanazok maradnak. Windows 11 x64-re készült; a Windowsban rendszerint már telepített Microsoft Edge WebView2 futtatókörnyezetet használja. Ha ez hiányzik, az alkalmazás felajánlja a Microsoft hivatalos letöltési oldalának megnyitását. Nincs szükség külön .NET-, Python- vagy Node.js-telepítésre a futtatáshoz.
+
+Az EXE automatikusan indítja a hangot. Futás közben Windows-időzítő hajtja a figyelést és az adatfrissítést; a böngészőmotor háttérbeli időzítőkorlátozása ki van kapcsolva. A csengető másik ablak mögött vagy minimalizálva is tovább figyel. A Windows automatikus képernyőkikapcsolását és elalvását a program futás közben megakadályozza, bezáráskor ezt feloldja. A rendszer energiabeállításait nem írja át. A kézi altatás, hibernálás, kikapcsolás és a laptopfedél lecsukásához beállított alvás ezt felülírhatja.
+
+A programból egy példány indul: az újabb indítás az előző ablakot hozza előre, így nem szól kétszer ugyanaz a vonat. Az ideiglenes felületet és betöltőt bezáráskor törli; a WebView2 profilja a `%LOCALAPPDATA%\DunahidCsengeto` mappában marad. Az EXE a felületet és a Microsoft betöltőjét tartalmazza, a teljes böngészőmotort nem csomagolja újra.
+
+A fordítás és a csomag ellenőrzése megtörtént Linuxon; az EXE tényleges elindítását Windows 11-en ebben a környezetben nem lehetett ellenőrizni. Az asztali időzítést és a hangot Chromiumban automatizált tesztek vizsgálják, ellenőrzött menetrendi adatokkal. Az EXE nincs digitálisan aláírva. [Forrás és újrafordítás](windows/README.md).
+
 ## Használat
 
 1. Nyisd meg a `dunahid-csengeto.html` fájlt naprakész Chrome, Edge, Firefox vagy Safari böngészőben, internetkapcsolattal.
