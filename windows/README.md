@@ -22,7 +22,9 @@ py windows/test_package.py -v
 
 A build az első futáskor a Microsoft hivatalos NuGet-tárából letölti a rögzített `Microsoft.Web.WebView2` SDK-t. Használat előtt ellenőrzi a forrásban rögzített SHA-256 lenyomatot. A betöltő DLL-t, a HTML-t és a licencszövegeket Windows-erőforrásként ágyazza be. Az `EventToken.h` egyetlen, a Windows ABI-val azonos 64 bites eseményazonosítót ad a MinGW-fejlécekhez. Nincs szükség a Microsoft teljes SDK-jának vagy egy teljes böngészőnek a csomagolására.
 
-A kimenet az EXE, annak SHA-256 lenyomata, egy JSON fordítási jegyzék, valamint a Microsoft licenc- és megjegyzésfájljai. A jegyzék tartalmazza a felhasznált fordító és SDK verzióját, az SDK ellenőrzőösszegét, a beágyazott HTML és a natív forrás lenyomatát. Felület- vagy natív módosítás után az EXE-t újra kell fordítani. A csomagteszt hibázik, ha a beágyazott felület vagy a jegyzék nem a jelenlegi forráshoz tartozik.
+A kimenet az EXE, annak SHA-256 lenyomata, egy JSON fordítási jegyzék, valamint a Microsoft licenc- és megjegyzésfájljai. Ezekből a build automatikusan elkészíti a `downloads/Dunahid-csengeto-Windows11.zip` csomagot, rövid használati útmutatóval és külön ZIP-ellenőrzőösszeggel. A jegyzék tartalmazza a felhasznált fordító és SDK verzióját, az SDK ellenőrzőösszegét, a beágyazott HTML és a natív forrás lenyomatát. Felület- vagy natív módosítás után az EXE-t újra kell fordítani. A csomagteszt hibázik, ha a beágyazott felület vagy a jegyzék nem a jelenlegi forráshoz tartozik.
+
+A már elkészült EXE újrafordítás nélkül is ZIP-be csomagolható: `python3 windows/package.py` (Windows alatt: `py windows/package.py`).
 
 ## Futtatás és időzítés
 

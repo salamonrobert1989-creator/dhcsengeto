@@ -4,7 +4,11 @@
 
 ## Windows 11 alkalmazás
 
-**[Dunahíd csengető EXE letöltése](https://github.com/salamonrobert1989-creator/dhcsengeto/raw/refs/heads/main/downloads/Dunahid-csengeto.exe)**
+**[Dunahíd csengető ZIP letöltése](https://raw.githubusercontent.com/salamonrobert1989-creator/dhcsengeto/refs/heads/main/downloads/Dunahid-csengeto-Windows11.zip)**
+
+A ZIP-et az **Az összes kibontása** paranccsal bontsd ki, majd a kibontott mappából indítsd el a `Dunahid-csengeto.exe` fájlt. Rövid használati útmutatót is tartalmaz.
+
+[Külön EXE letöltése](https://raw.githubusercontent.com/salamonrobert1989-creator/dhcsengeto/refs/heads/main/downloads/Dunahid-csengeto.exe)
 
 Töltsd le és indítsd el a `Dunahid-csengeto.exe` fájlt. Nem kell telepíteni vagy mellé másolni a HTML-t. A kinézet, az indulási listák, az élő és menetrendi adatok, a késések, a teljes járatmenetrend, a próbacsengés és a leállítógomb ugyanazok maradnak. Windows 11 x64-re készült; a Windowsban rendszerint már telepített Microsoft Edge WebView2 futtatókörnyezetet használja. Ha ez hiányzik, az alkalmazás felajánlja a Microsoft hivatalos letöltési oldalának megnyitását. Nincs szükség külön .NET-, Python- vagy Node.js-telepítésre a futtatáshoz.
 

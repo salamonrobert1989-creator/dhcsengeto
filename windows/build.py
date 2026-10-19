@@ -11,6 +11,7 @@ import subprocess
 import urllib.request
 import uuid
 import zipfile
+from package import create_archive
 
 ROOT = Path(__file__).resolve().parent.parent
 SDK_VERSION = "1.0.4258.31"
@@ -143,6 +144,7 @@ END
     output.with_suffix(".build.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     output.with_suffix(".sha256").write_text(f"{metadata['exe_sha256']}  {output.name}\n", encoding="utf-8")
     print(json.dumps(metadata, indent=2))
+    print(f"Windows ZIP: {create_archive(output)}")
 
 
 if __name__ == "__main__":
