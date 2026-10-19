@@ -25,8 +25,9 @@ A teljesen kattintás nélküli hanglejátszás a böngésző adott webhelyre é
 - Megnyitáskor friss adatot kér. Kapcsolati hiba esetén a korábban letöltött teljes menetrendet mutatja, menetrendi időkkel. Ezt már az irányellenőrzéskor eltárolja, így az első kattintás előtti kapcsolatszakadást is kezeli. A tárolás az aktuális oldal memóriájában történik; újratöltés után ismét le kell tölteni a menetrendet.
 - Elsősorban a `predictedDepartureTime` alapján csenget. Ha nincs friss indulási előrejelzés, a `departureTime` vagy `scheduledDepartureTime` szerinti indulás alapján jelez. A kijelzett indulás, a következő jelzés és a tényleges csengetés ugyanazt az adatforrást követi. Az érkezési időt nem használja indulásként.
 - 10 másodpercenként frissít; a frissítések nem fedik egymást. Új előrejelzés átütemezi a jelzést. Törölt járat nem csenget; egy már elindult vonat rövid ideig megmarad a jelzéshez akkor is, ha kikerül az indulási válaszból.
-- A friss élő adat mindig elsőbbséget élvez. 45 másodpercnél régebbi előrejelzés esetén a letöltött menetrendi időre tér vissza; ezt „Menetrend szerint” jelzéssel mutatja. Adatkapcsolati hiba alatt is tovább figyeli a memóriában lévő menetrendet. Első megnyitáskor szükséges a menetrend letöltése; a még le nem töltött indulásokat teljes adatkapcsolati hiba mellett nem tudja megismerni.
-- Öt másodpercnél nagyobb késéssel és a hang aktiválása előtti időpontra nem pótol jelzést. Élő és menetrendi adat közötti váltáskor sem csenget kétszer ugyanarra a vonatra. A böngészőlap újratöltésén át is megőrzi a már kezelt járatokat, ha a munkamenet-tárhely elérhető.
+- A friss élő adat mindig elsőbbséget élvez. 45 másodpercnél régebbi előrejelzés esetén a letöltött menetrendi időre tér vissza; ezt „Menetrend szerint” jelzéssel mutatja. Kivétel a már elindult, az indulásához képest legfeljebb 45 másodperccel korábban vagy később megfigyelt vonat: ennek utolsó élő indulási idejét a jelzésig és az újrapróbálási idő végéig megtartja, ha közben eltűnik az indulási listából. Adatkapcsolati hiba alatt is tovább figyeli a memóriában lévő menetrendet. Első megnyitáskor szükséges a menetrend letöltése; a még le nem töltött indulásokat teljes adatkapcsolati hiba mellett nem tudja megismerni.
+- Egy jelzést csak a hang sikeres elindítása után jelöl lejátszottnak. Átmeneti hangindítási hiba vagy már aktivált hang felfüggesztése esetén az esedékességtől számított legfeljebb 60 másodpercig újrapróbálható. Az időzítő csúszását és az ennél régebbi kimaradásokat naplózza. Az első hangaktiválás előtti jelzéseket nem pótolja. Egy elmúlt menetrendi idő nem tiltja le ugyanannak a vonatnak a később érkező, még esedékes élő előrejelzését.
+- Élő és menetrendi adat közötti váltáskor sem csenget kétszer ugyanarra a már jelzett vonatra. A böngészőlap újratöltésén át is megőrzi a sikeresen elindított jelzéseket, ha a munkamenet-tárhely elérhető. A próbacsengést az esedékes vonatjelzés megszakítja, és elindítja a vonat saját 20 másodperces jelzését.
 - A valós idejű menetrend előrejelzés, nem a jármű tényleges indulását igazoló érzékelő. Eszközalvás, háttérlap-felfüggesztés, némítás vagy adatkapcsolati hiba akadályozhatja a pontos hangjelzést. A képernyő ébren tartását támogató böngészőkben ezt engedélyezett hang mellett kéri az oldal.
 
 ## Memóriahasználat
@@ -41,4 +42,14 @@ A függőségmentes időzítési és adatfeldolgozási tesztek Node.js 18+ alatt
 node --test tests/dunahid.test.cjs
 ```
 
-Ezek ellenőrzött tesztadatokat használnak; nem igazolják a külső BKK-szolgáltatás aktuális elérhetőségét. A böngészős ellenőrzéshez nyisd meg az oldalt, figyeld az adatkapcsolat állapotát, és próbáld ki a hangjelzést és a kézi leállítást.
+A böngészős automatizált tesztekhez Playwright és Chromium szükséges. A HTML-programnak továbbra sincs külső függősége. Linuxon a tesztfüggőség a tárolón kívül is telepíthető:
+
+```sh
+npm install --prefix /tmp/dunahid-tests --no-audit --no-fund --package-lock=false playwright@1.62.1
+/tmp/dunahid-tests/node_modules/.bin/playwright install chromium
+NODE_PATH=/tmp/dunahid-tests/node_modules node --test tests/dunahid.test.cjs tests/dunahid.browser.cjs
+```
+
+A böngészős teszt a rendszer `/usr/bin/chromium` böngészőjét használja, ha létezik, egyébként a Playwright Chromiumát. Egyedi hely megadható a `CHROMIUM_EXECUTABLE_PATH` változóval. A tesztek valódi Web Audio hangrendszer mellett ellenőrzik az időzítést, a hang felfüggesztését, a sikertelen hangindítás utáni újrapróbálást, az adatkimaradást, a próbacsengéssel való ütközést, a kézi és automatikus leállást, az irányszűrést és az ismétlésvédelmet. Az időzítő késését szimulálják; ez nem azonos az eszköz tényleges elaltatásával.
+
+Ezek ellenőrzött menetrendi tesztadatokat használnak; nem igazolják a külső BKK-szolgáltatás aktuális elérhetőségét vagy az eszköz hangszórójának hangerejét. A saját eszközön nyisd meg az oldalt, figyeld az adatkapcsolat állapotát, és próbáld ki a hangjelzést és a kézi leállítást.

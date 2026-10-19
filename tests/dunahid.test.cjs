@@ -16,6 +16,55 @@ const trip = { id: 'BKK_H6123_run', routeId: 'BKK_H6', tripHeadsign: 'Közvágó
 const stops = { a: { name: 'Szigetszentmiklós' }, b: { name: 'Dunaharaszti külső' }, c: { name: 'Közvágóhíd' } };
 const item = (changes = {}, meta = {}) => M.departure({ tripId: trip.id, serviceDate: '2026-10-18', departureTime: seconds(now), predictedDepartureTime: seconds(now), ...changes }, trip, meta, now);
 
+test('regresszió: az esedékesség megállapítása még nem jelenti a hang elindulását', () => {
+  const monitor = new M.Monitor();
+  monitor.ingest([item()], now);
+  const first = monitor.due(now + 30000, now - 1);
+  assert.equal(first.ringing.length, 1);
+  assert.equal(monitor.handled.size, 0);
+  assert.equal(monitor.due(now + 30250, now - 1).ringing.length, 1, 'sikertelen hangindítás után újrapróbálható');
+  monitor.confirm(first.ringing, now + 30250);
+  assert.equal(monitor.due(now + 30500, now - 1).ringing.length, 0);
+});
+test('regresszió: 12 másodperces időzítőcsúszás nem veszíti el a jelzést', () => {
+  const monitor = new M.Monitor();
+  monitor.ingest([item({ predictedDepartureTime: undefined })], now);
+  assert.equal(monitor.due(now + 42000, now - 1).ringing.length, 1);
+});
+test('a pótlási időablak legfeljebb 60 másodperc, és a kimaradást csak egyszer jelzi', () => {
+  const monitor = new M.Monitor();
+  monitor.ingest([item({ predictedDepartureTime: undefined })], now);
+  assert.equal(monitor.due(now + 90000, now - 1).ringing.length, 1);
+  const expired = monitor.due(now + 90001, now - 1);
+  assert.equal(expired.ringing.length, 0);
+  assert.equal(expired.missed.length, 1);
+  assert.equal(monitor.due(now + 90250, now - 1).missed.length, 0);
+  assert.equal(monitor.handled.size, 0, 'le nem játszott jelzés nem kerül az ismétlésvédelembe');
+});
+test('regresszió: a hangrendszer átmeneti hiánya nem fogyasztja el a jelzést', () => {
+  const monitor = new M.Monitor();
+  monitor.ingest([item({ predictedDepartureTime: undefined })], now);
+  assert.equal(monitor.due(now + 30000).ringing.length, 0);
+  assert.equal(monitor.handled.size, 0);
+  assert.equal(monitor.due(now + 35000, now - 1).ringing.length, 1);
+});
+test('regresszió: az indulás közelében kapott előrejelzés megmarad a +30 mp jelzésig', () => {
+  const monitor = new M.Monitor();
+  monitor.ingest([item({ departureTime: seconds(now - 180000), predictedDepartureTime: seconds(now + 20000) })], now);
+  monitor.ingest([], now + 25000);
+  const result = monitor.due(now + 50000, now - 600000);
+  assert.equal(result.ringing.length, 1);
+  assert.equal(result.ringing[0].time, now + 20000);
+});
+test('regresszió: az elmúlt menetrendi idő nem tiltja le a később frissített élő jelzést', () => {
+  const monitor = new M.Monitor();
+  monitor.ingest([item({ predictedDepartureTime: undefined })], now);
+  assert.equal(monitor.due(now + 100000, now - 1).missed.length, 1);
+  assert.equal(monitor.due(now + 100250, now - 1).missed.length, 0, 'a kimaradás naplózása egyszeri');
+  monitor.ingest([{ ...item({ predictedDepartureTime: seconds(now + 120000) }), observedAt: now + 110000 }], now + 110000);
+  assert.equal(monitor.due(now + 150000, now - 1).ringing.length, 1);
+});
+
 test('az irányt a megállók sorrendje dönti el, nem a közös útvonalnév', () => {
   assert.equal(M.direction({ stopTimes: [{ stopId: 'a' }, { stopId: 'b' }, { stopId: 'c' }] }, stops), true);
   assert.equal(M.direction({ stopTimes: [{ stopId: 'c' }, { stopId: 'b' }, { stopId: 'a' }] }, stops), false);
@@ -51,7 +100,9 @@ test('pontosan indulás +30 mp után válik esedékessé a jelzés', () => {
   const monitor = new M.Monitor();
   monitor.ingest([item()], now);
   assert.equal(monitor.due(now + 29999, now - 1000).ringing.length, 0);
-  assert.equal(monitor.due(now + 30000, now - 1000).ringing.length, 1);
+  const result = monitor.due(now + 30000, now - 1000);
+  assert.equal(result.ringing.length, 1);
+  monitor.confirm(result.ringing, now + 30000);
   assert.equal(monitor.due(now + 30001, now - 1000).ringing.length, 0);
 });
 test('az új valós idejű indulási idő átütemezi a jelzést', () => {
@@ -80,6 +131,7 @@ test('élő adat nélkül a menetrendi indulás után is csenget', () => {
   const result = monitor.due(now + 30000, now - 1);
   assert.equal(result.ringing.length, 1);
   assert.equal(result.ringing[0].realtime, false);
+  monitor.confirm(result.ringing, now + 30000);
   assert.equal(monitor.due(now + 31000, now - 1).ringing.length, 0);
 });
 test('a letöltött menetrend friss adatkapcsolat nélkül is használható', () => {
@@ -114,7 +166,9 @@ test('eltűnő és elavuló élő adat esetén visszatér a menetrendi időre', 
 test('menetrendi jelzés után újra megjelenő élő adat nem csenget másodszor', () => {
   const monitor = new M.Monitor();
   monitor.ingest([item({ predictedDepartureTime: undefined })], now);
-  assert.equal(monitor.due(now + 30000, now - 1).ringing.length, 1);
+  const result = monitor.due(now + 30000, now - 1);
+  assert.equal(result.ringing.length, 1);
+  monitor.confirm(result.ringing, now + 30000);
   monitor.ingest([{ ...item({ predictedDepartureTime: seconds(now + 30000) }), observedAt: now + 31000 }], now + 31000);
   assert.equal(monitor.due(now + 60000, now - 1).ringing.length, 0);
 });
@@ -213,12 +267,12 @@ test('kimaradó és törölt vonat nem csenget, indulási idő nélküli törlé
 });
 test('elavult élő adatból menetrend nélkül és alvás után nincs késői csengetés', () => {
   const stale = new M.Monitor();
-  stale.ingest([item({ departureTime: undefined, predictedDepartureTime: seconds(now + 30000) })], now);
-  assert.equal(stale.due(now + 60000, now - 1).ringing.length, 0);
+  stale.ingest([item({ departureTime: undefined, predictedDepartureTime: seconds(now + 120000) })], now);
+  assert.equal(stale.due(now + 150000, now - 1).ringing.length, 0);
   const sleeping = new M.Monitor();
   sleeping.ingest([item()], now);
-  assert.equal(sleeping.due(now + 36000, now - 1).missed.length, 1);
-  assert.equal(sleeping.due(now + 37000, now - 1).ringing.length, 0);
+  assert.equal(sleeping.due(now + 90001, now - 1).missed.length, 1);
+  assert.equal(sleeping.due(now + 90500, now - 1).ringing.length, 0);
 });
 test('a hang aktiválása előtt esedékes jelzés később sem csenget visszamenőleg', () => {
   const monitor = new M.Monitor();
@@ -229,7 +283,7 @@ test('a hang aktiválása előtt esedékes jelzés később sem csenget visszame
 test('újratöltés után sem csenget újra ugyanaz a napi vonat', () => {
   const monitor = new M.Monitor();
   monitor.ingest([item()], now);
-  monitor.due(now + 30000, now - 1);
+  monitor.confirm(monitor.due(now + 30000, now - 1).ringing, now + 30000);
   const restored = new M.Monitor([...monitor.handled]);
   restored.ingest([item()], now + 31000);
   assert.equal(restored.due(now + 31000, now - 1).ringing.length, 0);
@@ -246,7 +300,7 @@ test('a vonat- és ismétlésvédelmi tárolók mérete korlátos', () => {
   const monitor = new M.Monitor();
   for (let i = 0; i < 500; i++) {
     monitor.ingest([{ ...item(), key: `trip-${i}` }], now);
-    monitor.due(now + 30000, now - 1);
+    monitor.confirm(monitor.due(now + 30000, now - 1).ringing, now + 30000);
   }
   assert.ok(monitor.records.size <= 64);
   assert.ok(monitor.handled.size <= 128);

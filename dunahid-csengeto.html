@@ -171,7 +171,7 @@
     const TrainModel = (() => {
       const MINUTE = 60000;
       const FRESH_MS = 45000;
-      const LATE_MS = 5000;
+      const LATE_MS = 60000;
       const RETAIN_MS = 4 * 60 * MINUTE;
       const dateFormat = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Budapest', year: 'numeric', month: '2-digit', day: '2-digit' });
       const normal = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim().replace(/\s+/g, ' ');
@@ -250,7 +250,10 @@
         };
       }
       function effectiveDeparture(item, now) {
-        if (item.predicted && now - item.observedAt <= FRESH_MS) return item;
+        // A train can disappear from the feed on departure. Keep its last
+        // near-departure estimate through the alarm and the bounded retry window.
+        const departedRecently = item.predicted <= now && Math.abs(item.predicted - item.observedAt) <= FRESH_MS && now <= item.predicted + 30000 + LATE_MS;
+        if (item.predicted && (now - item.observedAt <= FRESH_MS || departedRecently)) return item;
         if (item.scheduled) return item.realtime ? { ...item, time: item.scheduled, realtime: false, delay: 0 } : item;
         return null;
       }
@@ -316,7 +319,7 @@
           // disappear from a subsequent stop response before its +30 s alarm.
           for (const item of items) {
             if (item.cancelled) this.records.delete(item.key);
-            else if (inRetentionWindow(item, now)) this.records.set(item.key, item);
+            else if (inRetentionWindow(item, now)) this.records.set(item.key, { ...item, skippedDueAt: (this.records.get(item.key) || {}).skippedDueAt });
           }
           this.prune(now);
         }
@@ -333,17 +336,25 @@
         }
         due(now, armedAt = Infinity) {
           const ringing = [], missed = [];
+          if (!Number.isFinite(armedAt)) { this.prune(now); return { ringing, missed }; }
           for (const record of this.records.values()) {
             const item = effectiveDeparture(record, now);
             if (!item) continue;
             const dueAt = item.time + 30000;
             if (this.handled.has(item.key) || dueAt > now) continue;
-            this.handled.set(item.key, now + RETAIN_MS);
             if (dueAt >= armedAt && now - dueAt <= LATE_MS) ringing.push(item);
-            else if (dueAt >= armedAt) missed.push(item);
+            else if (record.skippedDueAt !== dueAt) {
+              // An expired fallback must not suppress a later live correction.
+              record.skippedDueAt = dueAt;
+              if (dueAt >= armedAt) missed.push(item);
+            }
           }
           this.prune(now);
           return { ringing, missed };
+        }
+        confirm(items, now) {
+          for (const item of items) this.handled.set(item.key, now + RETAIN_MS);
+          this.prune(now);
         }
       }
       return Object.freeze({ MINUTE, FRESH_MS, normal, isOrigin, isTarget, isH6, trainNumber, direction, southboundDirection, departureAppearance, combinedDepartures, departure, effectiveDeparture, tripSchedule, timetableTime, ScheduleCache, cancelled, Monitor });
@@ -373,6 +384,7 @@
       let audio = null, armedAt = Infinity, activeAlarm = null, stopped = false, lastSecond = -1, listSignature = '', wakeLock = null;
       const soundGestureEvents = ['pointerup', 'touchend', 'click', 'keydown'];
       let waitingForSoundGesture = false, automaticSoundAttempt = false, wakeLockPending = false;
+      let soundRunning = false, soundError = '';
 
       function log(message, type = '') {
         const entry = node('div', `log-entry ${type}`, `${time(Date.now())} · ${message}`);
@@ -589,16 +601,18 @@
       function updateSoundState(context) {
         if (stopped || context !== audio) return;
         if (context.state === 'running') {
-          const becameReady = armedAt === Infinity;
-          if (becameReady) armedAt = Date.now();
+          const becameReady = !soundRunning;
+          soundRunning = true;
+          // Temporary suspension must not move the first activation deadline.
+          if (armedAt === Infinity) armedAt = Date.now();
           stopWaitingForSoundGesture();
           if (!activeAlarm) $('alarm-title').textContent = 'Csengetés készenlétben';
           if (becameReady) log('Hangjelzés automatikusan aktiválva.', 'success');
           void acquireWakeLock();
         } else {
-          armedAt = Infinity;
+          soundRunning = false;
           stopAlarm(false);
-          $('alarm-title').textContent = 'A hang az első kattintásra aktiválódik';
+          $('alarm-title').textContent = armedAt === Infinity ? 'A hang az első kattintásra aktiválódik' : 'A hang szünetel · kattints az oldalra a folytatáshoz';
           if (!waitingForSoundGesture) {
             waitingForSoundGesture = true;
             for (const type of soundGestureEvents) document.addEventListener(type, activateSoundFromGesture, { capture: true, passive: true });
@@ -635,32 +649,52 @@
         void enableSound().finally(() => { automaticSoundAttempt = false; });
       }
       function ring(items, test = false) {
-        if (!audio || audio.state !== 'running') return;
+        if (!audio || audio.state !== 'running') return false;
+        if (activeAlarm && activeAlarm.test && !test) stopAlarm(false);
         // Overlapping events share one alarm and never extend the 20 s sound.
-        if (activeAlarm) { log('Újabb jelzés érkezett a folyamatban lévő csengetés alatt.'); return; }
-        const oscillator = audio.createOscillator(), gain = audio.createGain();
-        const start = audio.currentTime, end = start + 20;
-        oscillator.type = 'sine';
-        oscillator.frequency.value = 880;
-        gain.gain.setValueAtTime(0, start);
-        for (let offset = 0; offset + .4 < 20; offset += .6) {
-          gain.gain.setValueAtTime(0, start + offset);
-          gain.gain.linearRampToValueAtTime(.22, start + offset + .008);
-          gain.gain.exponentialRampToValueAtTime(.001, start + offset + .35);
-          gain.gain.setValueAtTime(0, start + offset + .4);
+        if (activeAlarm) {
+          if (test) return false;
+          log(`Újabb vonat a folyamatban lévő csengetés alatt: ${items.map(item => item.number || item.tripId).join(', ')}.`);
+          return true;
         }
-        gain.gain.setValueAtTime(0, end);
-        oscillator.connect(gain);
-        gain.connect(audio.destination);
-        activeAlarm = { oscillator, gain, endsAt: Date.now() + 20000 };
-        oscillator.onended = () => { if (activeAlarm && activeAlarm.oscillator === oscillator) stopAlarm(false); };
-        oscillator.start(start);
-        oscillator.stop(end); // Audio-clock deadline also works with throttled JS timers.
-        $('alarm-banner').classList.add('ringing');
-        $('alarm-title').textContent = test ? 'Próbacsengés' : 'Vonat elindult';
-        $('alarm-subtitle').textContent = test ? 'A próbacsengés a felső gombbal leállítható.' : `${items.map(item => item.number || 'Ismeretlen számú').join(', ')} · Szigetszentmiklós → Dunaharaszti külső`;
-        $('stop-alarm').disabled = false;
-        log(test ? 'Próbacsengés indult.' : `Csengetés: ${items.map(item => item.number || item.tripId).join(', ')}.`, 'success');
+        let oscillator = null, gain = null;
+        try {
+          oscillator = audio.createOscillator(); gain = audio.createGain();
+          const start = audio.currentTime, end = start + 20;
+          oscillator.type = 'sine';
+          oscillator.frequency.value = 880;
+          gain.gain.setValueAtTime(0, start);
+          for (let offset = 0; offset + .4 < 20; offset += .6) {
+            gain.gain.setValueAtTime(0, start + offset);
+            gain.gain.linearRampToValueAtTime(.22, start + offset + .008);
+            gain.gain.exponentialRampToValueAtTime(.001, start + offset + .35);
+            gain.gain.setValueAtTime(0, start + offset + .4);
+          }
+          gain.gain.setValueAtTime(0, end);
+          oscillator.connect(gain);
+          gain.connect(audio.destination);
+          oscillator.onended = () => { if (activeAlarm && activeAlarm.oscillator === oscillator) stopAlarm(false); };
+          oscillator.start(start);
+          oscillator.stop(end); // Audio-clock deadline also works with throttled JS timers.
+          activeAlarm = { oscillator, gain, endsAt: Date.now() + 20000, test };
+          soundError = '';
+          $('alarm-banner').classList.add('ringing');
+          $('alarm-title').textContent = test ? 'Próbacsengés' : 'Vonat elindult';
+          $('alarm-subtitle').textContent = test ? 'A próbacsengés a felső gombbal leállítható.' : `${items.map(item => item.number || 'Ismeretlen számú').join(', ')} · Szigetszentmiklós → Dunaharaszti külső`;
+          $('stop-alarm').disabled = false;
+          log(test ? 'Próbacsengés indult.' : `Csengetés: ${items.map(item => item.number || item.tripId).join(', ')}.`, 'success');
+          return true;
+        } catch (error) {
+          if (oscillator) {
+            oscillator.onended = null;
+            try { oscillator.stop(); } catch { /* Not started. */ }
+            oscillator.disconnect();
+          }
+          if (gain) gain.disconnect();
+          const message = `A hangjelzés nem indult el; újrapróbáljuk. ${error.message}`;
+          if (soundError !== message) { soundError = message; log(message, 'error'); }
+          return false;
+        }
       }
       function stopAlarm(manual = true) {
         if (!activeAlarm) return;
@@ -671,7 +705,7 @@
         oscillator.disconnect();
         gain.disconnect();
         $('alarm-banner').classList.remove('ringing');
-        $('alarm-title').textContent = armedAt === Infinity ? 'A hang az első kattintásra aktiválódik' : 'Csengetés készenlétben';
+        $('alarm-title').textContent = audio && audio.state === 'running' ? 'Csengetés készenlétben' : 'A hang szünetel · kattints az oldalra a folytatáshoz';
         $('alarm-subtitle').textContent = 'Szigetszentmiklós → Dunaharaszti külső';
         $('stop-alarm').disabled = true;
         log(manual ? 'A csengetést kikapcsoltad. A következő vonat jelzése aktív marad.' : 'A csengetés véget ért.');
@@ -712,11 +746,15 @@
       }
       function tick() {
         const now = Date.now();
-        const { ringing, missed } = monitor.due(now, armedAt);
-        if (ringing.length || missed.length) remember();
-        if (ringing.length) ring(ringing);
-        if (missed.length) log(`${missed.length} jelzés időpontja már elmúlt; utólag nem csengetünk.`, 'error');
         if (activeAlarm && now >= activeAlarm.endsAt) stopAlarm(false);
+        const { ringing, missed } = monitor.due(now, armedAt);
+        if (ringing.length && ring(ringing)) {
+          monitor.confirm(ringing, now);
+          remember();
+          const delay = Math.max(...ringing.map(item => now - item.time - 30000));
+          if (delay >= 1000) log(`A jelzés ${Math.floor(delay / 1000)} mp időzítési késéssel indult.`, 'error');
+        }
+        if (missed.length) log(`${missed.length} jelzés több mint egy perce esedékes; utólag nem csengetünk.`, 'error');
         const second = Math.floor(now / 1000);
         if (second !== lastSecond) {
           lastSecond = second;
@@ -799,6 +837,7 @@
         if (wakeLock) { wakeLock.release(); wakeLock = null; }
         if (audio && audio.state !== 'closed') audio.close();
         armedAt = Infinity;
+        soundRunning = false;
         automaticSoundAttempt = false;
       }
       $('test-alarm').addEventListener('click', async () => { if (await enableSound()) ring([], true); });
